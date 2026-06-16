@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__codegraph__codegraph_files",
+      "Bash(git -C /d/Dwonload/gpt_image_playground-main/gpt_image_playground-main diff --staged)",
+      "Bash(git -C /d/Dwonload/gpt_image_playground-main/gpt_image_playground-main diff)"
+    ]
+  }
+}
