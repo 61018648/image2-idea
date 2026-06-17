@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { resetMemoryBillingStoreForTest } from '../billing/store.js'
+import { resetMemoryGenerationJobStoreForTest } from '../generationJobs/store.js'
 import { handleAdminRequest } from './admin.js'
 import { handleOrdersRequest } from './orders.js'
 import { handlePaymentNotifyRequest } from './paymentNotify.js'
@@ -47,6 +48,7 @@ describe('payment notify route', () => {
     process.env.PLATFORM_DEV_MODE = 'false'
     process.env.PLATFORM_PAYMENT_NOTIFY_SECRET = 'secret'
     resetMemoryBillingStoreForTest()
+    resetMemoryGenerationJobStoreForTest()
   })
 
   it('requires the payment notify secret outside dev mode', async () => {

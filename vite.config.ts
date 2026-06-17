@@ -19,6 +19,14 @@ function loadDevProxyConfig() {
 
 export default defineConfig(({ command }) => {
   const devProxyConfig = command === 'serve' ? loadDevProxyConfig() : null
+  const platformApiTarget = process.env.VITE_PLATFORM_API_URL || 'http://127.0.0.1:8788'
+  const platformProxy = {
+    '/api/platform': {
+      target: platformApiTarget,
+      changeOrigin: true,
+      secure: false,
+    },
+  }
 
   return {
     plugins: [react()],
@@ -32,6 +40,7 @@ export default defineConfig(({ command }) => {
       proxy:
         devProxyConfig?.enabled
           ? {
+              ...platformProxy,
               [devProxyConfig.prefix]: {
                 target: devProxyConfig.target,
                 changeOrigin: devProxyConfig.changeOrigin,
@@ -43,7 +52,7 @@ export default defineConfig(({ command }) => {
                   ),
               },
             }
-          : undefined,
+          : platformProxy,
     },
   }
 })

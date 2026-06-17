@@ -14,7 +14,9 @@ export async function handleAssetRequest(request: Request): Promise<Response> {
     const asset = await getAssetStorage().readAsset(assetId)
     if (!asset) return errorResponse('Not found', 404, 'not_found')
 
-    return new Response(request.method === 'HEAD' ? undefined : asset.bytes, {
+    const body = request.method === 'HEAD' ? undefined : Uint8Array.from(asset.bytes)
+
+    return new Response(body, {
       status: 200,
       headers: {
         'Content-Type': asset.mime,

@@ -96,7 +96,7 @@ GET  /api/platform/generations
 GET  /api/platform/generations?jobId=<job_id>
 ```
 
-该接口会创建平台生图任务、预扣积分并立即返回 `job.id`。未设置 `DATABASE_URL` 时使用内存任务存储，并在后台异步执行任务；进程重启后任务记录会丢失。设置 `DATABASE_URL` 并完成 migration 后，会使用 PostgreSQL/Prisma `generation_jobs` 表保存任务。
+该接口会创建平台生图任务、预扣积分并立即返回 `job.id`。未设置 `DATABASE_URL` 时使用内存任务存储，并在后台异步执行任务；进程重启后任务记录会丢失。设置 `DATABASE_URL` 并完成 migration 后，会使用 MySQL/Prisma `generation_jobs` 表保存任务。
 
 创建任务响应示例：
 
@@ -174,7 +174,7 @@ POST /api/platform/images/generations
 - `PLATFORM_SESSION_SECRET`：真实登录 Cookie 签名密钥。启用注册/登录时必填，应使用高强度随机字符串。
 - `PLATFORM_COOKIE_SECURE`：设为 `true` 时 session cookie 增加 `Secure` 属性，HTTPS 生产环境建议开启。
 - `PLATFORM_PAYMENT_NOTIFY_SECRET`：生产态支付回调共享密钥。
-- `DATABASE_URL`：可选。设置后使用 PostgreSQL/Prisma 保存账号、余额、订单、支付事件和账本数据；正式商业化建议开启。
+- `DATABASE_URL`：可选。设置后使用 MySQL/Prisma 保存账号、余额、订单、支付事件和账本数据；正式商业化建议开启。连接串格式：`mysql://用户名:密码@主机:端口/数据库名`，例如 `mysql://root:password@localhost:3306/gpt_image_platform`。
 - `PLATFORM_DATA_FILE`：可选。未设置 `DATABASE_URL` 时生效；设置后使用 JSON 文件保存开发态账号、余额、订单和账本数据，不设置则使用内存存储。
 - `PLATFORM_ASSET_DIR`：可选。本地资产存储目录，默认使用 `server/.platform-assets`；生产部署时必须挂载到持久化卷，后续可替换为 S3/R2/OSS。
 
@@ -207,12 +207,14 @@ Nginx 转发到：
 
 ## 开发态最小流程
 
-如需使用 PostgreSQL 持久化账本和真实登录注册，先在 `server/` 下设置 `DATABASE_URL` 和 `PLATFORM_SESSION_SECRET` 并执行：
+如需使用 MySQL 持久化账本和真实登录注册，先把 `server/.env.example` 复制为 `server/.env`，填写 `DATABASE_URL`（MySQL 连接串）和 `PLATFORM_SESSION_SECRET`，然后在 `server/` 下执行：
 
 ```bash
 npm install
 npm run db:migrate
 ```
+
+> MySQL 提示：连接串格式为 `mysql://用户名:密码@主机:端口/数据库名`。`prisma migrate dev` 会在账号有建库权限时自动创建数据库；若没有权限，请先手动 `CREATE DATABASE gpt_image_platform;`。
 
 未设置 `DATABASE_URL` 时仍使用内存或 `PLATFORM_DATA_FILE` 开发态存储，并应通过 `PLATFORM_DEV_MODE=true` 使用开发态用户；真实注册/登录接口会返回数据库未配置错误。
 
@@ -256,6 +258,6 @@ GET /api/platform/balance
 
 ## 后续替换点
 
-当前 `server/src/billing/store.ts` 是开发态存储实现。正式商业化时应替换为 PostgreSQL/Prisma 或其他数据库实现，并保持 `BillingStore` 接口稳定。
+当前 `server/src/billing/store.ts` 是开发态存储实现。正式商业化时应替换为 MySQL/Prisma 或其他数据库实现，并保持 `BillingStore` 接口稳定。
 
 正式支付接入时，应在 `server/src/routes/paymentNotify.ts` 中按 provider 分支校验 Stripe/微信/支付宝签名，并继续复用 `markOrderPaid` 的幂等入账逻辑。

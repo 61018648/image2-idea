@@ -3,17 +3,17 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "mysql"
   url      = env("DATABASE_URL")
 }
 
 model UserAccount {
-  id           String    @id
-  email        String?   @unique
-  passwordHash String?   @map("password_hash")
-  displayName  String?   @map("display_name")
-  role         String    @default("user")
-  status       String    @default("active")
+  id           String    @id @db.VarChar(128)
+  email        String?   @unique @db.VarChar(191)
+  passwordHash String?   @map("password_hash") @db.VarChar(255)
+  displayName  String?   @map("display_name") @db.VarChar(191)
+  role         String    @default("user") @db.VarChar(32)
+  status       String    @default("active") @db.VarChar(32)
   lastLoginAt  DateTime? @map("last_login_at")
   createdAt    DateTime  @default(now()) @map("created_at")
   updatedAt    DateTime  @updatedAt @map("updated_at")
@@ -27,7 +27,7 @@ model UserAccount {
 }
 
 model Balance {
-  userId           String      @id @map("user_id")
+  userId           String      @id @map("user_id") @db.VarChar(128)
   availableCredits Int         @default(0) @map("available_credits")
   updatedAt        DateTime    @default(now()) @updatedAt @map("updated_at")
 
@@ -37,11 +37,11 @@ model Balance {
 }
 
 model Plan {
-  id          String   @id
-  name        String
+  id          String   @id @db.VarChar(128)
+  name        String   @db.VarChar(191)
   credits     Int
   priceCents  Int      @map("price_cents")
-  currency    String   @default("USD")
+  currency    String   @default("USD") @db.VarChar(8)
   enabled     Boolean  @default(true)
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
@@ -52,16 +52,16 @@ model Plan {
 }
 
 model Order {
-  id                String    @id
-  userId            String    @map("user_id")
-  planId            String    @map("plan_id")
-  status            String    @default("pending")
+  id                String    @id @db.VarChar(128)
+  userId            String    @map("user_id") @db.VarChar(128)
+  planId            String    @map("plan_id") @db.VarChar(128)
+  status            String    @default("pending") @db.VarChar(32)
   amountCents       Int       @map("amount_cents")
-  currency          String    @default("USD")
+  currency          String    @default("USD") @db.VarChar(8)
   credits           Int
-  provider          String
-  providerOrderId   String?   @map("provider_order_id")
-  providerPaymentId String?   @map("provider_payment_id")
+  provider          String    @db.VarChar(32)
+  providerOrderId   String?   @map("provider_order_id") @db.VarChar(191)
+  providerPaymentId String?   @map("provider_payment_id") @db.VarChar(191)
   createdAt         DateTime  @default(now()) @map("created_at")
   paidAt            DateTime? @map("paid_at")
 
@@ -73,14 +73,14 @@ model Order {
 }
 
 model CreditLedger {
-  id           String   @id
-  userId       String   @map("user_id")
-  type         String
+  id           String   @id @db.VarChar(128)
+  userId       String   @map("user_id") @db.VarChar(128)
+  type         String   @db.VarChar(32)
   amount       Int
   balanceAfter Int      @map("balance_after")
-  source       String
-  sourceId     String?  @unique @map("source_id")
-  description  String?
+  source       String   @db.VarChar(32)
+  sourceId     String?  @unique @map("source_id") @db.VarChar(191)
+  description  String?  @db.Text
   createdAt    DateTime @default(now()) @map("created_at")
 
   user UserAccount @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -90,10 +90,10 @@ model CreditLedger {
 }
 
 model PaymentEvent {
-  id              String   @id
-  provider        String
-  providerEventId String   @map("provider_event_id")
-  orderId         String?  @map("order_id")
+  id              String   @id @db.VarChar(128)
+  provider        String   @db.VarChar(32)
+  providerEventId String   @map("provider_event_id") @db.VarChar(128)
+  orderId         String?  @map("order_id") @db.VarChar(128)
   processedAt     DateTime @default(now()) @map("processed_at")
   raw             Json
 
@@ -102,19 +102,19 @@ model PaymentEvent {
 }
 
 model GenerationJob {
-  id             String    @id
-  userId         String    @map("user_id")
-  status         String    @default("queued")
-  prompt         String
+  id             String    @id @db.VarChar(128)
+  userId         String    @map("user_id") @db.VarChar(128)
+  status         String    @default("queued") @db.VarChar(32)
+  prompt         String    @db.Text
   requestParams  Json      @map("request_params")
   inputImageData Json      @default("[]") @map("input_image_data")
-  maskDataUrl    String?   @map("mask_data_url")
+  maskDataUrl    String?   @map("mask_data_url") @db.LongText
   costCredits    Int       @map("cost_credits")
   images         Json      @default("[]")
   rawImageUrls   Json?     @map("raw_image_urls")
   revisedPrompts Json?     @map("revised_prompts")
   actualParams   Json?     @map("actual_params")
-  errorMessage   String?   @map("error_message")
+  errorMessage   String?   @map("error_message") @db.Text
   createdAt      DateTime  @default(now()) @map("created_at")
   startedAt      DateTime? @map("started_at")
   finishedAt     DateTime? @map("finished_at")

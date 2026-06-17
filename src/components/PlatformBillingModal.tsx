@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
@@ -7,14 +7,21 @@ import type { PlatformAdminStatsResponse, PlatformBalanceResponse, PlatformGener
 import { logoutPlatformUser } from '../lib/platformAuthApi'
 import { listPlatformGenerations } from '../lib/platformGenerationApi'
 import { useStore } from '../store'
+import { CodeIcon, HistoryIcon, RefreshIcon, SettingsIcon } from './icons'
+
+type BillingTab = 'overview' | 'plans' | 'orders' | 'jobs' | 'ledger' | 'ops'
 
 interface PlatformBillingModalProps {
   baseUrl: string
   onClose: () => void
 }
 
-function formatPrice(plan: PlatformPlanResponse): string {
-  return `${(plan.priceCents / 100).toFixed(2)} ${plan.currency}`
+function formatPrice(cents: number, currency: string): string {
+  return `${(cents / 100).toFixed(2)} ${currency}`
+}
+
+function formatPlanPrice(plan: PlatformPlanResponse): string {
+  return formatPrice(plan.priceCents, plan.currency)
 }
 
 function formatLedgerType(type: PlatformLedgerEntryResponse['type']): string {
@@ -47,15 +54,43 @@ function formatOrderProvider(provider: PlatformOrderResponse['provider']): strin
   return '开发态'
 }
 
-function formatDateTime(value: string): string {
+function formatDateTime(value?: string): string {
+  if (!value) return '暂无'
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
   return date.toLocaleString()
 }
 
+function getUnitPrice(plan: PlatformPlanResponse): string {
+  if (!plan.credits) return '-'
+  return `${(plan.priceCents / plan.credits / 100).toFixed(3)} ${plan.currency}/credit`
+}
+
+function StatusPill({ children, tone = 'gray' }: { children: string; tone?: 'gray' | 'green' | 'blue' | 'amber' | 'red' }) {
+  const className = {
+    gray: 'border-gray-200 bg-gray-50 text-gray-600 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-300',
+    green: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-200',
+    blue: 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-200',
+    amber: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200',
+    red: 'border-red-200 bg-red-50 text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-200',
+  }[tone]
+  return <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold ${className}`}>{children}</span>
+}
+
+function EmptyState({ title, body }: { title: string; body: string }) {
+  return (
+    <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50/80 p-5 text-sm dark:border-white/[0.08] dark:bg-white/[0.03]">
+      <div className="font-semibold text-gray-800 dark:text-gray-100">{title}</div>
+      <div className="mt-1 text-gray-500 dark:text-gray-400">{body}</div>
+    </div>
+  )
+}
+
 export default function PlatformBillingModal({ baseUrl, onClose }: PlatformBillingModalProps) {
   const modalRef = useRef<HTMLDivElement>(null)
   const showToast = useStore((s) => s.showToast)
+  const setShowSettings = useStore((s) => s.setShowSettings)
+  const [tab, setTab] = useState<BillingTab>('overview')
   const [user, setUser] = useState<PlatformUserInfo | null>(null)
   const [balance, setBalance] = useState<PlatformBalanceResponse['balance'] | null>(null)
   const [plans, setPlans] = useState<PlatformPlanResponse[]>([])
@@ -73,14 +108,13 @@ export default function PlatformBillingModal({ baseUrl, onClose }: PlatformBilli
 
   const refresh = async () => {
     setError(null)
-    const [meResponse, balanceResponse, plansResponse, ledgerResponse, ordersResponse, jobsResponse, statsResponse] = await Promise.all([
+    const [meResponse, balanceResponse, plansResponse, ledgerResponse, ordersResponse, jobsResponse] = await Promise.all([
       getPlatformMe(baseUrl),
       getPlatformBalance(baseUrl),
       getPlatformPlans(baseUrl),
-      getPlatformLedger(baseUrl, 20),
-      listPlatformOrders(baseUrl, 10),
+      getPlatformLedger(baseUrl, 40),
+      listPlatformOrders(baseUrl, 30),
       listPlatformGenerations({ baseUrl }),
-      getPlatformAdminStats(baseUrl),
     ])
     setUser(meResponse.user)
     setBalance(balanceResponse.balance)
@@ -88,7 +122,7 @@ export default function PlatformBillingModal({ baseUrl, onClose }: PlatformBilli
     setLedger(ledgerResponse.entries)
     setOrders(ordersResponse.orders)
     setJobs(jobsResponse.jobs)
-    setAdminStats(statsResponse)
+    setAdminStats(await getPlatformAdminStats(baseUrl).catch(() => null))
   }
 
   useEffect(() => {
@@ -105,6 +139,17 @@ export default function PlatformBillingModal({ baseUrl, onClose }: PlatformBilli
       cancelled = true
     }
   }, [baseUrl])
+
+  const planStats = useMemo(() => {
+    const recommended = plans.reduce<PlatformPlanResponse | null>((best, plan) => (!best || plan.credits > best.credits ? plan : best), null)
+    const paidOrders = orders.filter((order) => order.status === 'paid')
+    return {
+      recommended,
+      paidOrders,
+      totalPurchasedCredits: paidOrders.reduce((sum, order) => sum + order.credits, 0),
+      totalPaidCents: paidOrders.reduce((sum, order) => sum + order.amountCents, 0),
+    }
+  }, [orders, plans])
 
   const handleLogout = async () => {
     try {
@@ -131,7 +176,7 @@ export default function PlatformBillingModal({ baseUrl, onClose }: PlatformBilli
       })
       await refresh()
       window.dispatchEvent(new Event('platform-billing-updated'))
-      showToast(`已购买 ${plan.credits} 积分`, 'success')
+      showToast(`已购买 ${plan.credits} credits`, 'success')
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       setError(message)
@@ -162,32 +207,59 @@ export default function PlatformBillingModal({ baseUrl, onClose }: PlatformBilli
     }
   }
 
+  const tabs: Array<{ id: BillingTab; label: string }> = [
+    { id: 'overview', label: '概览' },
+    { id: 'plans', label: '套餐' },
+    { id: 'orders', label: '订单' },
+    { id: 'jobs', label: '任务' },
+    { id: 'ledger', label: '流水' },
+    ...(adminStats ? [{ id: 'ops' as const, label: '运营' }] : []),
+  ]
+
+  const renderPlanButton = (plan: PlatformPlanResponse) => {
+    const busy = workingPlanId === plan.id
+    if (user?.mode === 'development') {
+      return (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => handleCreateDevOrder(plan)}
+          className="mt-4 inline-flex w-full items-center justify-center rounded-xl bg-blue-600 px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {busy ? '处理中...' : '开发态购买'}
+        </button>
+      )
+    }
+    return (
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => handleCreateCheckout(plan)}
+        className="mt-4 inline-flex w-full items-center justify-center rounded-xl bg-gray-950 px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white dark:text-gray-950 dark:hover:bg-gray-200"
+      >
+        {busy ? '处理中...' : '购买套餐'}
+      </button>
+    )
+  }
+
   return createPortal(
-    <div data-no-drag-select className="fixed inset-0 z-[105] flex items-center justify-center p-4" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/30 backdrop-blur-sm animate-overlay-in" />
+    <div data-no-drag-select className="fixed inset-0 z-[105] flex items-center justify-center p-3 sm:p-4" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/35 backdrop-blur-sm animate-overlay-in" />
       <div
         ref={modalRef}
-        className="relative z-10 flex max-h-[85vh] w-full max-w-2xl flex-col rounded-3xl border border-white/50 bg-white/95 p-5 shadow-2xl ring-1 ring-black/5 animate-modal-in dark:border-white/[0.08] dark:bg-gray-900/95 dark:ring-white/10"
+        className="relative z-10 grid max-h-[90vh] w-full max-w-6xl overflow-hidden rounded-3xl border border-white/60 bg-white/95 shadow-2xl ring-1 ring-black/5 animate-modal-in dark:border-white/[0.08] dark:bg-gray-950/95 dark:ring-white/10 lg:grid-cols-[240px_minmax(0,1fr)]"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mb-5 flex items-center justify-between gap-4">
-          <div>
-            <h3 className="text-base font-semibold text-gray-800 dark:text-gray-100">平台账单中心</h3>
-            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">余额、套餐和积分流水</p>
-          </div>
-          <div className="flex items-center gap-2">
-            {user?.mode === 'authenticated' && (
-              <button
-                type="button"
-                onClick={handleLogout}
-                className="rounded-lg px-2 py-1 text-xs font-medium text-gray-500 transition hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-white/[0.06] dark:hover:text-gray-200"
-              >
-                退出
-              </button>
-            )}
+        <aside className="border-b border-gray-200 bg-gray-50/80 p-4 dark:border-white/[0.08] dark:bg-white/[0.03] lg:border-b-0 lg:border-r">
+          <div className="flex items-start justify-between gap-3 lg:block">
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-400">Billing</div>
+              <h3 className="mt-2 text-xl font-semibold text-gray-950 dark:text-white">计费中心</h3>
+              <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">余额、套餐、订单和任务都在这里闭环。</p>
+            </div>
             <button
               onClick={onClose}
-              className="rounded-full p-1 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-white/[0.06] dark:hover:text-gray-200"
+              className="rounded-full p-1 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-white/[0.06] dark:hover:text-gray-200 lg:hidden"
               aria-label="关闭"
             >
               <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -195,165 +267,285 @@ export default function PlatformBillingModal({ baseUrl, onClose }: PlatformBilli
               </svg>
             </button>
           </div>
-        </div>
 
-        <div className="flex-1 overflow-y-auto pr-1 custom-scrollbar">
-          {loading ? (
-            <div className="rounded-2xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-500 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-400">正在加载平台账单...</div>
-          ) : error ? (
-            <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-600 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-200">{error}</div>
-          ) : (
-            <div className="space-y-5">
-              <section className="rounded-2xl border border-amber-200 bg-amber-50/80 p-4 text-sm text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-100">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <div className="font-semibold">商业化平台 MVP 已启用</div>
-                    <div className="mt-1 text-xs text-amber-700/80 dark:text-amber-100/75">
-                      已接入用户会话、积分余额、套餐订单、任务扣费、最近订单和支付收银台占位。
-                    </div>
-                  </div>
-                  <div className="shrink-0 rounded-full bg-white/70 px-2 py-1 text-[11px] font-semibold text-amber-700 dark:bg-white/10 dark:text-amber-100">
-                    {user?.mode === 'development' ? '开发模式' : '真实账号'}
-                  </div>
-                </div>
-                {checkoutNotice && (
-                  <div className="mt-3 rounded-xl border border-amber-200/80 bg-white/70 px-3 py-2 text-xs text-amber-700 dark:border-amber-400/20 dark:bg-white/[0.06] dark:text-amber-100">
-                    {checkoutNotice}。当前已创建待支付订单，后续接入 Stripe / 微信 / 支付宝后会跳转到真实收银台。
-                  </div>
-                )}
-              </section>
+          <div className="mt-4 rounded-2xl border border-white/80 bg-white p-4 dark:border-white/[0.08] dark:bg-white/[0.04]">
+            <div className="text-xs text-gray-500 dark:text-gray-400">当前余额</div>
+            <div className="mt-1 text-4xl font-semibold text-gray-950 dark:text-white">{balance?.availableCredits ?? 0}</div>
+            <div className="text-xs text-gray-500 dark:text-gray-400">credits</div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <StatusPill tone={user?.mode === 'development' ? 'amber' : 'blue'}>{user?.mode === 'development' ? '开发模式' : '真实账号'}</StatusPill>
+              {adminStats ? <StatusPill tone="green">管理员</StatusPill> : null}
+            </div>
+          </div>
 
-              <section className="grid gap-3 sm:grid-cols-3 xl:grid-cols-5">
-                <div className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-white/[0.08] dark:bg-white/[0.03]">
-                  <div className="text-xs font-medium text-gray-500 dark:text-gray-400">用户数</div>
-                  <div className="mt-2 text-2xl font-bold text-gray-900 dark:text-white">{adminStats?.billing.users ?? 0}</div>
-                </div>
-                <div className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-white/[0.08] dark:bg-white/[0.03]">
-                  <div className="text-xs font-medium text-gray-500 dark:text-gray-400">订单数</div>
-                  <div className="mt-2 text-2xl font-bold text-gray-900 dark:text-white">{adminStats?.billing.orders ?? 0}</div>
-                </div>
-                <div className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-white/[0.08] dark:bg-white/[0.03]">
-                  <div className="text-xs font-medium text-gray-500 dark:text-gray-400">已支付</div>
-                  <div className="mt-2 text-2xl font-bold text-gray-900 dark:text-white">{adminStats?.billing.paidOrders ?? 0}</div>
-                </div>
-                <div className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-white/[0.08] dark:bg-white/[0.03]">
-                  <div className="text-xs font-medium text-gray-500 dark:text-gray-400">收入</div>
-                  <div className="mt-2 text-2xl font-bold text-gray-900 dark:text-white">{((adminStats?.billing.revenueCents ?? 0) / 100).toFixed(2)}</div>
-                  <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">{orders[0]?.currency ?? 'USD'}</div>
-                </div>
-                <div className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-white/[0.08] dark:bg-white/[0.03]">
-                  <div className="text-xs font-medium text-gray-500 dark:text-gray-400">任务</div>
-                  <div className="mt-2 text-2xl font-bold text-gray-900 dark:text-white">{adminStats?.jobs.total ?? jobs.length}</div>
-                </div>
-              </section>
+          <nav className="mt-4 grid grid-cols-3 gap-2 lg:grid-cols-1">
+            {tabs.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setTab(item.id)}
+                className={`rounded-xl px-3 py-2 text-left text-sm font-semibold transition ${tab === item.id ? 'bg-gray-950 text-white shadow-sm dark:bg-white dark:text-gray-950' : 'text-gray-600 hover:bg-white dark:text-gray-300 dark:hover:bg-white/[0.06]'}`}
+              >
+                {item.label}
+              </button>
+            ))}
+          </nav>
 
-              <section className="grid gap-3 sm:grid-cols-2">
-                <div className="rounded-2xl border border-blue-100 bg-blue-50/80 p-4 dark:border-blue-500/20 dark:bg-blue-500/10">
-                  <div className="text-xs font-medium text-blue-600 dark:text-blue-300">当前余额</div>
-                  <div className="mt-2 text-3xl font-bold text-blue-700 dark:text-blue-100">{balance?.availableCredits ?? 0}</div>
-                  <div className="mt-1 text-xs text-blue-600/70 dark:text-blue-200/70">credits</div>
-                </div>
-                <div className="rounded-2xl border border-gray-200 bg-gray-50 p-4 dark:border-white/[0.08] dark:bg-white/[0.03]">
-                  <div className="text-xs font-medium text-gray-500 dark:text-gray-400">平台用户</div>
-                  <div className="mt-2 truncate text-sm font-semibold text-gray-800 dark:text-gray-100">{user?.id ?? '未知用户'}</div>
-                  <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">模式：{user?.mode === 'development' ? '开发态' : '已认证'}</div>
-                </div>
-              </section>
+          <div className="mt-4 hidden space-y-2 lg:block">
+            <button
+              type="button"
+              onClick={() => void refresh()}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700 transition hover:bg-gray-50 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-200 dark:hover:bg-white/[0.08]"
+            >
+              <RefreshIcon className="h-4 w-4" />
+              刷新数据
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowSettings(true)}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700 transition hover:bg-gray-50 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-200 dark:hover:bg-white/[0.08]"
+            >
+              <SettingsIcon className="h-4 w-4" />
+              平台设置
+            </button>
+          </div>
+        </aside>
 
-              <section>
-                <h4 className="mb-3 text-sm font-semibold text-gray-800 dark:text-gray-100">套餐</h4>
-                <div className="grid gap-3 sm:grid-cols-3">
-                  {plans.map((plan) => (
-                    <div key={plan.id} className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-white/[0.08] dark:bg-white/[0.03]">
-                      <div className="text-sm font-semibold text-gray-800 dark:text-gray-100">{plan.name}</div>
-                      <div className="mt-2 text-2xl font-bold text-gray-900 dark:text-white">{plan.credits}</div>
-                      <div className="text-xs text-gray-500 dark:text-gray-400">credits / {formatPrice(plan)}</div>
-                      {user?.mode === 'development' ? (
-                        <button
-                          type="button"
-                          disabled={workingPlanId === plan.id}
-                          onClick={() => handleCreateDevOrder(plan)}
-                          className="mt-4 w-full rounded-xl bg-blue-500 px-3 py-2 text-sm font-medium text-white transition hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {workingPlanId === plan.id ? '处理中...' : '开发态购买'}
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          disabled={workingPlanId === plan.id}
-                          onClick={() => handleCreateCheckout(plan)}
-                          className="mt-4 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-medium text-gray-600 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-300 dark:hover:bg-white/[0.06]"
-                        >
-                          {workingPlanId === plan.id ? '处理中...' : user?.mode === 'development' ? '开发态购买' : '购买'}
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </section>
+        <main className="min-h-0 overflow-y-auto p-4 custom-scrollbar sm:p-5">
+          <div className="mb-5 flex items-start justify-between gap-3">
+            <div>
+              <h4 className="text-lg font-semibold text-gray-950 dark:text-white">钱包与运营面板</h4>
+              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                {user?.email ? user.email : user?.id ?? '未知用户'} · {orders.length} 个订单 · {jobs.length} 个任务
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              {user?.mode === 'authenticated' && (
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="rounded-xl px-3 py-2 text-sm font-semibold text-gray-500 transition hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-white/[0.06] dark:hover:text-gray-200"
+                >
+                  退出
+                </button>
+              )}
+              <button
+                onClick={onClose}
+                className="hidden rounded-full p-1 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-white/[0.06] dark:hover:text-gray-200 lg:block"
+                aria-label="关闭"
+              >
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
 
-              <section>
-                <h4 className="mb-3 text-sm font-semibold text-gray-800 dark:text-gray-100">最近订单</h4>
-                <div className="overflow-hidden rounded-2xl border border-gray-200 dark:border-white/[0.08]">
-                  {orders.length === 0 ? (
-                    <div className="p-4 text-sm text-gray-500 dark:text-gray-400">暂无订单</div>
-                  ) : orders.map((order) => (
-                    <div key={order.id} className="flex items-center justify-between gap-3 border-b border-gray-100 px-4 py-3 last:border-b-0 dark:border-white/[0.06]">
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium text-gray-800 dark:text-gray-100">{formatOrderStatus(order.status)}</div>
-                        <div className="truncate text-xs text-gray-500 dark:text-gray-400">{formatOrderProvider(order.provider)} · {order.credits} credits</div>
-                        <div className="mt-1 text-[11px] text-gray-400 dark:text-gray-500">{formatDateTime(order.createdAt)}</div>
-                      </div>
-                      <div className="shrink-0 text-right text-xs text-gray-500 dark:text-gray-400">
-                        <div>{(order.amountCents / 100).toFixed(2)} {order.currency}</div>
-                        <div className="mt-1 font-mono text-[10px] text-gray-400">{order.id}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </section>
-
-              <section>
-                <h4 className="mb-3 text-sm font-semibold text-gray-800 dark:text-gray-100">最近平台任务</h4>
-                <div className="overflow-hidden rounded-2xl border border-gray-200 dark:border-white/[0.08]">
-                  {jobs.length === 0 ? (
-                    <div className="p-4 text-sm text-gray-500 dark:text-gray-400">暂无平台任务</div>
-                  ) : jobs.map((job) => (
-                    <div key={job.id} className="flex items-center justify-between gap-3 border-b border-gray-100 px-4 py-3 last:border-b-0 dark:border-white/[0.06]">
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium text-gray-800 dark:text-gray-100">{formatJobStatus(job.status)}</div>
-                        <div className="truncate text-xs text-gray-500 dark:text-gray-400">{job.request?.prompt || job.id}</div>
-                        <div className="mt-1 text-[11px] text-gray-400 dark:text-gray-500">{formatDateTime(job.createdAt)} · {job.costCredits} credits</div>
-                      </div>
-                      <div className="shrink-0 text-xs text-gray-500 dark:text-gray-400">
-                        {job.images.length > 0 ? `${job.images.length} 张` : '无图'}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </section>
-
-              <section>
-                <h4 className="mb-3 text-sm font-semibold text-gray-800 dark:text-gray-100">最近流水</h4>
-                <div className="overflow-hidden rounded-2xl border border-gray-200 dark:border-white/[0.08]">
-                  {ledger.length === 0 ? (
-                    <div className="p-4 text-sm text-gray-500 dark:text-gray-400">暂无流水</div>
-                  ) : ledger.map((entry) => (
-                    <div key={entry.id} className="flex items-center justify-between gap-3 border-b border-gray-100 px-4 py-3 last:border-b-0 dark:border-white/[0.06]">
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium text-gray-800 dark:text-gray-100">{formatLedgerType(entry.type)}</div>
-                        <div className="truncate text-xs text-gray-500 dark:text-gray-400">{entry.description || entry.source}</div>
-                      </div>
-                      <div className={`shrink-0 text-sm font-semibold ${entry.amount >= 0 ? 'text-emerald-600 dark:text-emerald-300' : 'text-gray-700 dark:text-gray-200'}`}>
-                        {entry.amount > 0 ? '+' : ''}{entry.amount}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </section>
+          {checkoutNotice && (
+            <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-100">
+              {checkoutNotice}。订单已创建，接入真实支付后会跳转到收银台。
             </div>
           )}
-        </div>
+
+          {loading ? (
+            <div className="rounded-2xl border border-gray-200 bg-gray-50 p-5 text-sm text-gray-500 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-400">正在加载计费数据...</div>
+          ) : error ? (
+            <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-600 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-200">{error}</div>
+          ) : (
+            <div className="space-y-5">
+              {tab === 'overview' && (
+                <>
+                  <section className="grid gap-3 md:grid-cols-4">
+                    <div className="rounded-2xl border border-blue-100 bg-blue-50/80 p-4 dark:border-blue-500/20 dark:bg-blue-500/10">
+                      <div className="text-xs font-medium text-blue-600 dark:text-blue-300">可用余额</div>
+                      <div className="mt-2 text-3xl font-semibold text-blue-700 dark:text-blue-100">{balance?.availableCredits ?? 0}</div>
+                      <div className="mt-1 text-xs text-blue-600/70 dark:text-blue-200/70">credits</div>
+                    </div>
+                    <div className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-white/[0.08] dark:bg-white/[0.03]">
+                      <div className="text-xs text-gray-500 dark:text-gray-400">已购积分</div>
+                      <div className="mt-2 text-2xl font-semibold text-gray-950 dark:text-white">{planStats.totalPurchasedCredits}</div>
+                      <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">累计充值</div>
+                    </div>
+                    <div className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-white/[0.08] dark:bg-white/[0.03]">
+                      <div className="text-xs text-gray-500 dark:text-gray-400">支付金额</div>
+                      <div className="mt-2 text-2xl font-semibold text-gray-950 dark:text-white">{formatPrice(planStats.totalPaidCents, orders[0]?.currency ?? 'USD')}</div>
+                      <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">已支付订单</div>
+                    </div>
+                    <div className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-white/[0.08] dark:bg-white/[0.03]">
+                      <div className="text-xs text-gray-500 dark:text-gray-400">平台任务</div>
+                      <div className="mt-2 text-2xl font-semibold text-gray-950 dark:text-white">{jobs.length}</div>
+                      <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">最近 50 条</div>
+                    </div>
+                  </section>
+
+                  <section className="grid gap-4 lg:grid-cols-2">
+                    <div className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-white/[0.08] dark:bg-white/[0.03]">
+                      <div className="mb-3 flex items-center justify-between">
+                        <h5 className="text-sm font-semibold text-gray-950 dark:text-white">推荐充值</h5>
+                        <button className="text-xs font-semibold text-blue-600 dark:text-blue-300" onClick={() => setTab('plans')}>查看套餐</button>
+                      </div>
+                      {planStats.recommended ? (
+                        <div className="rounded-2xl bg-gray-50 p-4 dark:bg-white/[0.04]">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <div className="text-base font-semibold text-gray-950 dark:text-white">{planStats.recommended.name}</div>
+                              <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">{planStats.recommended.credits} credits · {getUnitPrice(planStats.recommended)}</div>
+                            </div>
+                            <div className="text-right text-lg font-semibold text-gray-950 dark:text-white">{formatPlanPrice(planStats.recommended)}</div>
+                          </div>
+                          {renderPlanButton(planStats.recommended)}
+                        </div>
+                      ) : (
+                        <EmptyState title="暂无可售套餐" body="请在后端配置套餐后再开放购买。" />
+                      )}
+                    </div>
+
+                    <div className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-white/[0.08] dark:bg-white/[0.03]">
+                      <div className="mb-3 flex items-center justify-between">
+                        <h5 className="text-sm font-semibold text-gray-950 dark:text-white">最近任务</h5>
+                        <button className="text-xs font-semibold text-blue-600 dark:text-blue-300" onClick={() => setTab('jobs')}>查看任务</button>
+                      </div>
+                      {jobs.length ? jobs.slice(0, 3).map((job) => (
+                        <div key={job.id} className="border-b border-gray-100 py-3 last:border-b-0 dark:border-white/[0.06]">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="truncate text-sm font-medium text-gray-900 dark:text-white">{job.request?.prompt || job.id}</div>
+                              <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">{formatDateTime(job.createdAt)} · {job.costCredits} credits</div>
+                            </div>
+                            <StatusPill tone={job.status === 'succeeded' ? 'green' : job.status === 'failed' ? 'red' : 'amber'}>{formatJobStatus(job.status)}</StatusPill>
+                          </div>
+                        </div>
+                      )) : <EmptyState title="暂无平台任务" body="使用平台模式提交生图后，任务会在这里显示。" />}
+                    </div>
+                  </section>
+                </>
+              )}
+
+              {tab === 'plans' && (
+                <section className="grid gap-4 md:grid-cols-3">
+                  {plans.length ? plans.map((plan) => (
+                    <div key={plan.id} className={`rounded-2xl border bg-white p-5 dark:bg-white/[0.03] ${plan.id === planStats.recommended?.id ? 'border-blue-300 shadow-sm dark:border-blue-500/30' : 'border-gray-200 dark:border-white/[0.08]'}`}>
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <div className="text-base font-semibold text-gray-950 dark:text-white">{plan.name}</div>
+                          <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">{plan.id}</div>
+                        </div>
+                        {plan.id === planStats.recommended?.id ? <StatusPill tone="blue">推荐</StatusPill> : null}
+                      </div>
+                      <div className="mt-5 text-4xl font-semibold text-gray-950 dark:text-white">{plan.credits}</div>
+                      <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">credits</div>
+                      <div className="mt-4 rounded-2xl bg-gray-50 p-3 dark:bg-white/[0.04]">
+                        <div className="text-lg font-semibold text-gray-950 dark:text-white">{formatPlanPrice(plan)}</div>
+                        <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">{getUnitPrice(plan)}</div>
+                      </div>
+                      {renderPlanButton(plan)}
+                    </div>
+                  )) : <EmptyState title="暂无可售套餐" body="后端暂未返回启用状态的套餐。" />}
+                </section>
+              )}
+
+              {tab === 'orders' && (
+                <section className="overflow-hidden rounded-2xl border border-gray-200 dark:border-white/[0.08]">
+                  {orders.length ? orders.map((order) => (
+                    <div key={order.id} className="grid gap-3 border-b border-gray-100 p-4 last:border-b-0 dark:border-white/[0.06] sm:grid-cols-[1fr_auto] sm:items-center">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <div className="font-medium text-gray-950 dark:text-white">{formatOrderStatus(order.status)}</div>
+                          <StatusPill tone={order.status === 'paid' ? 'green' : 'amber'}>{formatOrderProvider(order.provider)}</StatusPill>
+                        </div>
+                        <div className="mt-1 truncate text-xs text-gray-500 dark:text-gray-400">{order.id} · {formatDateTime(order.createdAt)}</div>
+                      </div>
+                      <div className="text-left sm:text-right">
+                        <div className="text-sm font-semibold text-gray-950 dark:text-white">{formatPrice(order.amountCents, order.currency)}</div>
+                        <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">{order.credits} credits</div>
+                      </div>
+                    </div>
+                  )) : <EmptyState title="暂无订单" body="购买套餐后，订单会保存在这里。" />}
+                </section>
+              )}
+
+              {tab === 'jobs' && (
+                <section className="overflow-hidden rounded-2xl border border-gray-200 dark:border-white/[0.08]">
+                  {jobs.length ? jobs.map((job) => (
+                    <div key={job.id} className="grid gap-3 border-b border-gray-100 p-4 last:border-b-0 dark:border-white/[0.06] sm:grid-cols-[1fr_auto] sm:items-center">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <div className="truncate font-medium text-gray-950 dark:text-white">{job.request?.prompt || job.id}</div>
+                          <StatusPill tone={job.status === 'succeeded' ? 'green' : job.status === 'failed' ? 'red' : 'amber'}>{formatJobStatus(job.status)}</StatusPill>
+                        </div>
+                        <div className="mt-1 truncate text-xs text-gray-500 dark:text-gray-400">{job.id} · {formatDateTime(job.createdAt)}</div>
+                        {job.errorMessage && <div className="mt-2 text-xs text-red-600 dark:text-red-300">{job.errorMessage}</div>}
+                      </div>
+                      <div className="text-left sm:text-right">
+                        <div className="text-sm font-semibold text-gray-950 dark:text-white">{job.costCredits} credits</div>
+                        <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">{job.images.length} 张图</div>
+                      </div>
+                    </div>
+                  )) : <EmptyState title="暂无平台任务" body="提交平台托管生图后会生成任务记录。" />}
+                </section>
+              )}
+
+              {tab === 'ledger' && (
+                <section className="overflow-hidden rounded-2xl border border-gray-200 dark:border-white/[0.08]">
+                  {ledger.length ? ledger.map((entry) => (
+                    <div key={entry.id} className="grid gap-3 border-b border-gray-100 p-4 last:border-b-0 dark:border-white/[0.06] sm:grid-cols-[1fr_auto] sm:items-center">
+                      <div className="min-w-0">
+                        <div className="font-medium text-gray-950 dark:text-white">{formatLedgerType(entry.type)}</div>
+                        <div className="mt-1 truncate text-xs text-gray-500 dark:text-gray-400">{entry.description || entry.source} · {formatDateTime(entry.createdAt)}</div>
+                      </div>
+                      <div className={`text-left text-lg font-semibold sm:text-right ${entry.amount >= 0 ? 'text-emerald-600 dark:text-emerald-300' : 'text-gray-800 dark:text-gray-100'}`}>
+                        {entry.amount > 0 ? '+' : ''}{entry.amount}
+                        <div className="text-xs font-normal text-gray-500 dark:text-gray-400">余额 {entry.balanceAfter}</div>
+                      </div>
+                    </div>
+                  )) : <EmptyState title="暂无流水" body="充值、扣费和退款会记录为积分流水。" />}
+                </section>
+              )}
+
+              {tab === 'ops' && adminStats && (
+                <section className="space-y-4">
+                  <div className="grid gap-3 md:grid-cols-4">
+                    <div className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-white/[0.08] dark:bg-white/[0.03]">
+                      <div className="text-xs text-gray-500 dark:text-gray-400">用户</div>
+                      <div className="mt-2 text-2xl font-semibold text-gray-950 dark:text-white">{adminStats.billing.users}</div>
+                    </div>
+                    <div className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-white/[0.08] dark:bg-white/[0.03]">
+                      <div className="text-xs text-gray-500 dark:text-gray-400">订单</div>
+                      <div className="mt-2 text-2xl font-semibold text-gray-950 dark:text-white">{adminStats.billing.orders}</div>
+                    </div>
+                    <div className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-white/[0.08] dark:bg-white/[0.03]">
+                      <div className="text-xs text-gray-500 dark:text-gray-400">收入</div>
+                      <div className="mt-2 text-2xl font-semibold text-gray-950 dark:text-white">{formatPrice(adminStats.billing.revenueCents, orders[0]?.currency ?? 'USD')}</div>
+                    </div>
+                    <div className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-white/[0.08] dark:bg-white/[0.03]">
+                      <div className="text-xs text-gray-500 dark:text-gray-400">任务</div>
+                      <div className="mt-2 text-2xl font-semibold text-gray-950 dark:text-white">{adminStats.jobs.total}</div>
+                    </div>
+                  </div>
+                  <div className="grid gap-4 lg:grid-cols-2">
+                    <div className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-white/[0.08] dark:bg-white/[0.03]">
+                      <h5 className="text-sm font-semibold text-gray-950 dark:text-white">积分流向</h5>
+                      <div className="mt-3 space-y-2 text-sm">
+                        <div className="flex justify-between"><span className="text-gray-500 dark:text-gray-400">已发放</span><span className="font-semibold text-emerald-600">{adminStats.billing.creditsIssued}</span></div>
+                        <div className="flex justify-between"><span className="text-gray-500 dark:text-gray-400">已扣减</span><span className="font-semibold text-gray-950 dark:text-white">{adminStats.billing.creditsDebited}</span></div>
+                        <div className="flex justify-between"><span className="text-gray-500 dark:text-gray-400">平台余额</span><span className="font-semibold text-gray-950 dark:text-white">{adminStats.billing.availableCredits}</span></div>
+                      </div>
+                    </div>
+                    <div className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-white/[0.08] dark:bg-white/[0.03]">
+                      <h5 className="text-sm font-semibold text-gray-950 dark:text-white">任务状态</h5>
+                      <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                        <div className="rounded-xl bg-gray-50 p-3 dark:bg-white/[0.04]"><HistoryIcon className="mb-2 h-4 w-4 text-gray-500" />排队 {adminStats.jobs.queued}</div>
+                        <div className="rounded-xl bg-gray-50 p-3 dark:bg-white/[0.04]"><RefreshIcon className="mb-2 h-4 w-4 text-gray-500" />运行 {adminStats.jobs.running}</div>
+                        <div className="rounded-xl bg-gray-50 p-3 dark:bg-white/[0.04]"><CodeIcon className="mb-2 h-4 w-4 text-gray-500" />成功 {adminStats.jobs.succeeded}</div>
+                        <div className="rounded-xl bg-gray-50 p-3 dark:bg-white/[0.04]"><CodeIcon className="mb-2 h-4 w-4 text-gray-500" />失败 {adminStats.jobs.failed}</div>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+              )}
+            </div>
+          )}
+        </main>
       </div>
     </div>,
     document.body,

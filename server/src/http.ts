@@ -17,7 +17,16 @@ export function isSameOrigin(request: Request): boolean {
   if (!origin) return true
   try {
     const requestUrl = new URL(request.url)
-    return new URL(origin).origin === requestUrl.origin
+    const sourceOrigin = new URL(origin).origin
+    if (sourceOrigin === requestUrl.origin) return true
+
+    const allowedOrigins = new Set(
+      (process.env.PLATFORM_ALLOWED_ORIGINS || 'http://127.0.0.1:5173,http://localhost:5173')
+        .split(',')
+        .map((item) => item.trim().replace(/\/+$/, ''))
+        .filter(Boolean),
+    )
+    return allowedOrigins.has(sourceOrigin)
   } catch {
     return false
   }

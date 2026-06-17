@@ -11,15 +11,38 @@ describe('callImageApi', () => {
   })
 
   it('dispatches platform profiles to the platform endpoint', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
-      images: ['aW1hZ2U='],
-    }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
-    }))
+    vi.useFakeTimers()
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        job: {
+          id: 'job-1',
+          status: 'queued',
+          costCredits: 1,
+          images: [],
+          createdAt: new Date().toISOString(),
+        },
+        creditsQuoted: 1,
+        creditsCharged: 1,
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        job: {
+          id: 'job-1',
+          status: 'succeeded',
+          costCredits: 1,
+          images: ['aW1hZ2U='],
+          createdAt: new Date().toISOString(),
+          finishedAt: new Date().toISOString(),
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
     const platformProfile = createDefaultPlatformProfile({ id: 'platform-profile', baseUrl: '', apiKey: 'ignored-key' })
 
-    await callImageApi({
+    const promise = callImageApi({
       settings: {
         ...DEFAULT_SETTINGS,
         profiles: [platformProfile],
@@ -30,7 +53,15 @@ describe('callImageApi', () => {
       inputImageDataUrls: [],
     })
 
-    expect(fetchMock).toHaveBeenCalledWith('/api/platform/images/generations', expect.objectContaining({ method: 'POST' }))
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    await vi.advanceTimersByTimeAsync(1500)
+    await promise
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/platform/generations', expect.objectContaining({ method: 'POST' }))
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/platform/generations?jobId=job-1', expect.objectContaining({
+      cache: 'no-store',
+      credentials: 'include',
+    }))
   })
 
   it.each([false, true])(

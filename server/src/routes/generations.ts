@@ -1,7 +1,7 @@
 import { readRequiredSession } from '../auth/session.js'
 import { quoteImageCredits } from '../billing/quote.js'
 import { getBillingStore } from '../billing/store.js'
-import { errorResponse, jsonResponse, readJsonRequest } from '../http.js'
+import { errorResponse, isSameOrigin, jsonResponse, readJsonRequest } from '../http.js'
 import { getAssetStorage } from '../assets/storage.js'
 import { getGenerationJobStore } from '../generationJobs/store.js'
 import type { GenerationJobRequest, GenerationJob } from '../generationJobs/types.js'
@@ -152,7 +152,7 @@ export async function handleGenerationsRequest(request: Request): Promise<Respon
     const store = getBillingStore()
     await store.debitCredits({
       userId: session.userId,
-      amount: -creditsQuoted,
+      amount: creditsQuoted,
       sourceId: jobId,
       description: `Image generation: ${normalized.params.n} image(s)`,
     })
@@ -178,13 +178,3 @@ export async function handleGenerationsRequest(request: Request): Promise<Respon
   }
 }
 
-function isSameOrigin(request: Request): boolean {
-  const origin = request.headers.get('origin') || request.headers.get('referer')
-  if (!origin) return true
-  try {
-    const requestUrl = new URL(request.url)
-    return new URL(origin).origin === requestUrl.origin
-  } catch {
-    return false
-  }
-}

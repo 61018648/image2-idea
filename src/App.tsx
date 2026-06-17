@@ -7,6 +7,7 @@ import { getCustomProviderConfigUrl, loadCustomProviderSettingsFromUrl } from '.
 import { useDockerApiUrlMigrationNotice } from './hooks/useDockerApiUrlMigrationNotice'
 import Header from './components/Header'
 import PlatformStatusBanner from './components/PlatformStatusBanner'
+import PlatformCommercialConsole from './components/PlatformCommercialConsole'
 import SearchBar from './components/SearchBar'
 import TaskGrid from './components/TaskGrid'
 import AgentWorkspace from './components/AgentWorkspace'
@@ -82,6 +83,7 @@ export default function App() {
       ) : (
         <main data-home-main data-drag-select-surface className="pb-48">
           <PlatformStatusBanner />
+          <PlatformCommercialConsole />
           <div className="safe-area-x max-w-7xl mx-auto">
             <SearchBar />
             {filterFavorite && !activeFavoriteCollectionId ? <FavoriteCollectionsView /> : <TaskGrid />}
