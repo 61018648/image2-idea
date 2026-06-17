@@ -46,15 +46,13 @@ export async function handlePlatformImageGeneration(request: Request): Promise<R
   if (request.method !== 'POST') return errorResponse('Method not allowed', 405, 'method_not_allowed')
   if (!isSameOrigin(request)) return errorResponse('Forbidden', 403, 'forbidden')
 
-  const session = (() => {
-    try {
-      return readRequiredSession(request.headers)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      return errorResponse(message, message === 'Unauthorized' ? 401 : 500, message === 'Unauthorized' ? 'unauthorized' : 'server_not_configured')
-    }
-  })()
-  if (session instanceof Response) return session
+  let session
+  try {
+    session = await readRequiredSession(request)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return errorResponse(message, message === 'Unauthorized' ? 401 : 500, message === 'Unauthorized' ? 'unauthorized' : 'server_not_configured')
+  }
 
   const store = getBillingStore()
   let normalized: ReturnType<typeof normalizeRequest>

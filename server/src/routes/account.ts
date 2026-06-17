@@ -4,13 +4,13 @@ import { getBillingStore } from '../billing/store.js'
 
 export async function handleAccountRequest(request: Request): Promise<Response> {
   try {
-    const session = readRequiredSession(request.headers)
+    const session = await readRequiredSession(request)
     const store = getBillingStore()
     const url = new URL(request.url)
 
     if (url.pathname === '/api/platform/me' && request.method === 'GET') {
       const account = await store.getOrCreateAccount(session.userId)
-      return jsonResponse({ user: { id: session.userId, mode: session.mode }, account })
+      return jsonResponse({ user: { id: session.userId, mode: session.mode, email: session.email }, account })
     }
 
     if (url.pathname === '/api/platform/balance' && request.method === 'GET') {

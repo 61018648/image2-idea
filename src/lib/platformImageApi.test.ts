@@ -10,8 +10,16 @@ describe('callPlatformImageApi', () => {
 
   it('posts to the same-origin platform endpoint when baseUrl is empty', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
-      images: ['aW1hZ2U='],
-      actualParams: { size: '1024x1024' },
+      job: {
+        id: 'job-1',
+        status: 'succeeded',
+        costCredits: 1,
+        images: ['aW1hZ2U='],
+        actualParams: { size: '1024x1024' },
+        createdAt: '2026-06-17T00:00:00.000Z',
+      },
+      creditsQuoted: 1,
+      creditsCharged: 1,
     }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
 
     const result = await callPlatformImageApi({
@@ -21,14 +29,20 @@ describe('callPlatformImageApi', () => {
       inputImageDataUrls: [],
     }, createDefaultPlatformProfile({ baseUrl: '', apiKey: 'browser-key' }))
 
-    expect(fetchMock).toHaveBeenCalledWith('/api/platform/images/generations', expect.objectContaining({ method: 'POST' }))
+    expect(fetchMock).toHaveBeenCalledWith('/api/platform/generations', expect.objectContaining({ method: 'POST' }))
     expect(result.images).toEqual(['data:image/png;base64,aW1hZ2U='])
     expect(result.actualParams).toEqual({ size: '1024x1024' })
   })
 
   it('accepts a base URL that already points at /api/platform', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
-      images: ['aW1hZ2U='],
+      job: {
+        id: 'job-1',
+        status: 'succeeded',
+        costCredits: 1,
+        images: ['aW1hZ2U='],
+        createdAt: '2026-06-17T00:00:00.000Z',
+      },
     }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
 
     await callPlatformImageApi({
@@ -38,12 +52,18 @@ describe('callPlatformImageApi', () => {
       inputImageDataUrls: [],
     }, createDefaultPlatformProfile({ baseUrl: 'https://platform.example.com/api/platform' }))
 
-    expect(fetchMock).toHaveBeenCalledWith('https://platform.example.com/api/platform/images/generations', expect.objectContaining({ method: 'POST' }))
+    expect(fetchMock).toHaveBeenCalledWith('https://platform.example.com/api/platform/generations', expect.objectContaining({ method: 'POST' }))
   })
 
   it('does not send the browser profile API key', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
-      images: ['data:image/png;base64,aW1hZ2U='],
+      job: {
+        id: 'job-1',
+        status: 'succeeded',
+        costCredits: 1,
+        images: ['data:image/png;base64,aW1hZ2U='],
+        createdAt: '2026-06-17T00:00:00.000Z',
+      },
     }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
 
     await callPlatformImageApi({
@@ -61,7 +81,15 @@ describe('callPlatformImageApi', () => {
 
   it('sends prompt params and input images in the request body', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
-      images: ['aW1hZ2U='],
+      job: {
+        id: 'job-1',
+        status: 'succeeded',
+        costCredits: 2,
+        images: ['aW1hZ2U='],
+        createdAt: '2026-06-17T00:00:00.000Z',
+      },
+      creditsQuoted: 2,
+      creditsCharged: 2,
     }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
 
     await callPlatformImageApi({
@@ -79,6 +107,33 @@ describe('callPlatformImageApi', () => {
       inputImageDataUrls: ['data:image/png;base64,input'],
       maskDataUrl: 'data:image/png;base64,mask',
     })
+  })
+
+  it('downloads platform asset URLs returned by completed jobs', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        job: {
+          id: 'job-asset',
+          status: 'succeeded',
+          costCredits: 1,
+          images: ['/api/platform/assets/asset_test.png'],
+          rawImageUrls: ['/api/platform/assets/asset_test.png'],
+          createdAt: '2026-06-17T00:00:00.000Z',
+        },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(new Blob(['image-bytes'], { type: 'image/png' }), { status: 200, headers: { 'Content-Type': 'image/png' } }))
+
+    const result = await callPlatformImageApi({
+      settings: DEFAULT_SETTINGS,
+      prompt: 'prompt',
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: [],
+    }, createDefaultPlatformProfile({ baseUrl: 'https://platform.example.com/api/platform' }))
+
+    expect(fetchMock).toHaveBeenNthCalledWith(2, 'https://platform.example.com/api/platform/assets/asset_test.png', expect.objectContaining({ cache: 'no-store' }))
+    expect(result.images[0]).toMatch(/^data:image\/png;base64,/)
+    expect(result.rawImageUrls).toEqual(['https://platform.example.com/api/platform/assets/asset_test.png'])
   })
 
   it('throws platform HTTP errors', async () => {

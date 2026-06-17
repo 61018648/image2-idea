@@ -1,7 +1,11 @@
 import { createServer, type IncomingHttpHeaders, type IncomingMessage } from 'node:http'
 import { initBillingStore } from './billing/store.js'
 import { handleAccountRequest } from './routes/account.js'
+import { handleAssetRequest, isAssetRequest } from './routes/assets.js'
+import { handleAuthRequest } from './routes/auth.js'
 import { handleOrdersRequest } from './routes/orders.js'
+import { handleAdminRequest } from './routes/admin.js'
+import { handleGenerationsRequest } from './routes/generations.js'
 import { handlePaymentNotifyRequest } from './routes/paymentNotify.js'
 import { handlePlatformImageGeneration } from './routes/platformImages.js'
 
@@ -68,16 +72,32 @@ async function route(request: Request): Promise<Response> {
     return jsonResponse({ ok: true, service: 'gpt-image-playground-platform-server' })
   }
 
+  if (isAssetRequest(url.pathname)) {
+    return handleAssetRequest(request)
+  }
+
+  if (url.pathname.startsWith('/api/platform/auth/')) {
+    return handleAuthRequest(request)
+  }
+
   if (url.pathname === '/api/platform/me' || url.pathname === '/api/platform/balance' || url.pathname === '/api/platform/ledger') {
     return handleAccountRequest(request)
   }
 
-  if (url.pathname === '/api/platform/plans' || url.pathname === '/api/platform/orders') {
+  if (url.pathname === '/api/platform/plans' || url.pathname === '/api/platform/orders' || url.pathname === '/api/platform/checkout') {
     return handleOrdersRequest(request)
   }
 
   if (url.pathname === '/api/platform/payments/notify') {
     return handlePaymentNotifyRequest(request)
+  }
+
+  if (url.pathname === '/api/platform/admin/stats') {
+    return handleAdminRequest(request)
+  }
+
+  if (url.pathname === '/api/platform/generations') {
+    return handleGenerationsRequest(request)
   }
 
   if (url.pathname === '/api/platform/images/generations') {

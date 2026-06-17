@@ -1,6 +1,8 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
+import { getPrismaClient } from '../db/prisma.js'
 import { DEFAULT_PLANS } from './plans.js'
+import { createPrismaBillingStore } from './prismaStore.js'
 import type { Balance, BillingStore, LedgerEntry, Order, PaymentEvent, PaymentProvider, Plan, UserAccount } from './types.js'
 
 interface BillingState {
@@ -139,6 +141,29 @@ function createStore(initial: BillingState): BillingStore {
     async listPlans() {
       return mutate((draft) => [...draft.plans])
     },
+    async listOrders(userId, limit = 20) {
+      return mutate((draft) => Object.values(draft.orders)
+        .filter((order) => order.userId === userId)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .slice(0, Math.max(1, Math.min(100, Math.trunc(limit || 20)))))
+    },
+    async getAdminStats() {
+      return mutate((draft) => {
+        const orders = Object.values(draft.orders)
+        const paidOrders = orders.filter((order) => order.status === 'paid')
+        const ledger = draft.ledger
+        return {
+          users: Object.keys(draft.accounts).length,
+          orders: orders.length,
+          paidOrders: paidOrders.length,
+          pendingOrders: orders.filter((order) => order.status === 'pending').length,
+          revenueCents: paidOrders.reduce((sum, order) => sum + order.amountCents, 0),
+          creditsIssued: ledger.filter((entry) => entry.amount > 0).reduce((sum, entry) => sum + entry.amount, 0),
+          creditsDebited: Math.abs(ledger.filter((entry) => entry.amount < 0).reduce((sum, entry) => sum + entry.amount, 0)),
+          availableCredits: Object.values(draft.balances).reduce((sum, balance) => sum + balance.availableCredits, 0),
+        }
+      })
+    },
     async createOrder(userId, planId, provider = 'dev') {
       return mutate((draft) => {
         ensureAccount(draft, userId)
@@ -257,6 +282,10 @@ let storePromise: Promise<BillingStore> | null = null
 let cachedStore: BillingStore | null = null
 
 export async function createBillingStore(): Promise<BillingStore> {
+  if (process.env.DATABASE_URL?.trim()) {
+    return createPrismaBillingStore(getPrismaClient())
+  }
+
   const initial = await loadState(DEFAULT_FILE)
   return createStore(initial)
 }

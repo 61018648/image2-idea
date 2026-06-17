@@ -3,7 +3,11 @@
     "allow": [
       "mcp__codegraph__codegraph_files",
       "Bash(git -C /d/Dwonload/gpt_image_playground-main/gpt_image_playground-main diff --staged)",
-      "Bash(git -C /d/Dwonload/gpt_image_playground-main/gpt_image_playground-main diff)"
+      "Bash(git -C /d/Dwonload/gpt_image_playground-main/gpt_image_playground-main diff)",
+      "Bash(npm install *)",
+      "Bash(npm test *)",
+      "Bash(npm run *)",
+      "Bash(npx prisma *)"
     ]
   }
 }

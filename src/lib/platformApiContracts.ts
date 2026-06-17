@@ -14,6 +14,37 @@ export interface PlatformImageGenerationResponse extends CallApiResult {
   creditsCharged?: number
 }
 
+export type PlatformGenerationJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
+
+export interface PlatformGenerationJobResponse {
+  id: string
+  status: PlatformGenerationJobStatus
+  request?: PlatformImageGenerationRequest
+  costCredits: number
+  images: string[]
+  rawImageUrls?: string[]
+  revisedPrompts?: Array<string | undefined>
+  actualParams?: Partial<PlatformImageGenerationRequest['params']>
+  errorMessage?: string
+  createdAt: string
+  startedAt?: string
+  finishedAt?: string
+}
+
+export interface PlatformCreateGenerationResponse {
+  job: PlatformGenerationJobResponse
+  creditsQuoted?: number
+  creditsCharged?: number
+}
+
+export interface PlatformGetGenerationResponse {
+  job: PlatformGenerationJobResponse
+}
+
+export interface PlatformListGenerationsResponse {
+  jobs: PlatformGenerationJobResponse[]
+}
+
 export interface PlatformApiErrorResponse {
   error?: {
     message?: string
@@ -25,6 +56,16 @@ export interface PlatformApiErrorResponse {
 export interface PlatformUserInfo {
   id: string
   mode: 'development' | 'authenticated'
+  email?: string | null
+}
+
+export interface PlatformAuthRequest {
+  email: string
+  password: string
+}
+
+export interface PlatformAuthResponse {
+  user: PlatformUserInfo
 }
 
 export interface PlatformMeResponse {
@@ -73,9 +114,16 @@ export interface PlatformPlansResponse {
   plans: PlatformPlanResponse[]
 }
 
+export type PlatformPaymentProvider = 'dev' | 'stripe' | 'wechat' | 'alipay'
+
 export interface PlatformCreateOrderRequest {
   planId: string
-  provider?: 'dev' | 'stripe' | 'wechat' | 'alipay'
+  provider?: PlatformPaymentProvider
+}
+
+export interface PlatformCreateCheckoutRequest {
+  planId: string
+  provider?: Exclude<PlatformPaymentProvider, 'dev'>
 }
 
 export interface PlatformOrderResponse {
@@ -86,7 +134,7 @@ export interface PlatformOrderResponse {
   amountCents: number
   currency: 'USD' | 'CNY'
   credits: number
-  provider: 'dev' | 'stripe' | 'wechat' | 'alipay'
+  provider: PlatformPaymentProvider
   providerOrderId?: string
   providerPaymentId?: string
   createdAt: string
@@ -95,4 +143,40 @@ export interface PlatformOrderResponse {
 
 export interface PlatformCreateOrderResponse {
   order: PlatformOrderResponse
+}
+
+export interface PlatformCheckoutResponse {
+  order: PlatformOrderResponse
+  checkout: {
+    status: 'not_configured' | 'redirect' | 'qr_code'
+    provider: Exclude<PlatformPaymentProvider, 'dev'>
+    message?: string
+    checkoutUrl?: string
+    qrCodeUrl?: string
+  }
+}
+
+
+export interface PlatformOrdersResponse {
+  orders: PlatformOrderResponse[]
+}
+
+export interface PlatformAdminStatsResponse {
+  billing: {
+    users: number
+    orders: number
+    paidOrders: number
+    pendingOrders: number
+    revenueCents: number
+    creditsIssued: number
+    creditsDebited: number
+    availableCredits: number
+  }
+  jobs: {
+    total: number
+    queued: number
+    running: number
+    succeeded: number
+    failed: number
+  }
 }

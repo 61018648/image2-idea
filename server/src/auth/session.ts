@@ -1,6 +1,9 @@
+import { readCookieSession } from './cookieSession.js'
+
 export interface PlatformSession {
   userId: string
   mode: 'development' | 'authenticated'
+  email?: string
 }
 
 function readEnv(name: string): string {
@@ -13,15 +16,26 @@ function getBearerToken(headers: Headers): string {
   return auth.slice(7).trim()
 }
 
-export function readRequiredSession(headers: Headers): PlatformSession {
+export async function readRequiredSession(request: Request): Promise<PlatformSession> {
+  const headers = request.headers
   const devMode = readEnv('PLATFORM_DEV_MODE') === 'true'
   if (devMode) {
     const userId = headers.get('x-platform-user-id')?.trim() || 'dev-user'
     return { userId, mode: 'development' }
   }
 
+  const cookieSession = readCookieSession(headers)
+  if (cookieSession) {
+    return {
+      userId: cookieSession.userId,
+      ...(cookieSession.email ? { email: cookieSession.email } : {}),
+      mode: 'authenticated',
+    }
+  }
+
   const expectedToken = readEnv('PLATFORM_API_TOKEN')
   if (!expectedToken) {
+    if (readEnv('PLATFORM_SESSION_SECRET')) throw new Error('Unauthorized')
     throw new Error('Platform auth is not configured')
   }
 

@@ -3,9 +3,13 @@ import { useStore } from '../store'
 import { useVersionCheck } from '../hooks/useVersionCheck'
 import { useTooltip } from '../hooks/useTooltip'
 import { dismissAllTooltips } from '../lib/tooltipDismiss'
+import { createDefaultPlatformProfile, getActiveApiProfile } from '../lib/apiProfiles'
+import { getPlatformBalance } from '../lib/platformAccountApi'
 import ViewportTooltip from './ViewportTooltip'
 import HelpModal from './HelpModal'
 import HistoryModal from './HistoryModal'
+import PlatformBillingModal from './PlatformBillingModal'
+import PlatformAuthModal from './PlatformAuthModal'
 import { useFavoriteCollectionTitle } from './FavoriteCollections'
 import { EditIcon, HelpCircleIcon, HistoryIcon, InstallIcon, SettingsIcon } from './icons'
 
@@ -21,6 +25,7 @@ function isInstalledPwa() {
 
 export default function Header() {
   const appMode = useStore((s) => s.appMode)
+  const settings = useStore((s) => s.settings)
   const setAppMode = useStore((s) => s.setAppMode)
   const setShowSettings = useStore((s) => s.setShowSettings)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
@@ -30,6 +35,8 @@ export default function Header() {
   const filterFavorite = useStore((s) => s.filterFavorite)
   const activeFavoriteCollectionId = useStore((s) => s.activeFavoriteCollectionId)
   const activeConversation = agentConversations.find((item) => item.id === activeAgentConversationId)
+  const activeProfile = getActiveApiProfile(settings)
+  const platformMode = activeProfile.provider === 'platform'
   const favoriteCollectionTitle = useFavoriteCollectionTitle()
   const showFavoriteCollectionTitle = appMode === 'gallery' && Boolean(activeFavoriteCollectionId)
   const { hasUpdate, latestRelease, dismiss } = useVersionCheck()
@@ -39,8 +46,24 @@ export default function Header() {
   const [hintVisible, setHintVisible] = useState(false)
   const [scrollDirection, setScrollDirection] = useState<'up' | 'down'>('up')
   const [showHistoryModal, setShowHistoryModal] = useState(false)
+  const [showPlatformBilling, setShowPlatformBilling] = useState(false)
+  const [showPlatformAuth, setShowPlatformAuth] = useState(false)
+  const [platformBalance, setPlatformBalance] = useState<number | null>(null)
+  const [platformAuthRequired, setPlatformAuthRequired] = useState(false)
   const historyButtonRef = useRef<HTMLButtonElement>(null)
   const createConversation = useStore((s) => s.createAgentConversation)
+
+  const handleEnablePlatformMode = () => {
+    const existingPlatformProfile = settings.profiles.find((profile) => profile.provider === 'platform')
+    const platformProfile = existingPlatformProfile ?? createDefaultPlatformProfile()
+    useStore.getState().setSettings({
+      profiles: existingPlatformProfile ? settings.profiles : [...settings.profiles, platformProfile],
+      activeProfileId: platformProfile.id,
+    })
+    window.dispatchEvent(new Event('platform-billing-updated'))
+    useStore.getState().showToast('已切换到平台托管模式', 'success')
+    window.setTimeout(() => setShowPlatformBilling(true), 0)
+  }
 
   useEffect(() => {
     if (appMode === 'agent') {
@@ -82,6 +105,59 @@ export default function Header() {
       return () => clearTimeout(timer)
     }
   }, [appMode, agentMobileHeaderVisible])
+
+  useEffect(() => {
+    const openPlatformEntry = () => {
+      if (!platformMode) {
+        handleEnablePlatformMode()
+        return
+      }
+      platformAuthRequired ? setShowPlatformAuth(true) : setShowPlatformBilling(true)
+    }
+    const enablePlatform = () => handleEnablePlatformMode()
+
+    window.addEventListener('platform-open-entry', openPlatformEntry)
+    window.addEventListener('platform-enable-request', enablePlatform)
+    return () => {
+      window.removeEventListener('platform-open-entry', openPlatformEntry)
+      window.removeEventListener('platform-enable-request', enablePlatform)
+    }
+  }, [platformAuthRequired, platformMode, settings.profiles])
+
+  useEffect(() => {
+    if (!platformMode) {
+      setPlatformBalance(null)
+      return
+    }
+
+    let cancelled = false
+    const refreshBalance = () => {
+      void getPlatformBalance(activeProfile.baseUrl)
+        .then((response) => {
+          if (!cancelled) {
+            setPlatformBalance(response.balance.availableCredits)
+            setPlatformAuthRequired(false)
+          }
+        })
+        .catch((error) => {
+          if (!cancelled) {
+            const message = error instanceof Error ? error.message : String(error)
+            setPlatformBalance(null)
+            setPlatformAuthRequired(message === 'Unauthorized')
+          }
+        })
+    }
+
+    refreshBalance()
+    const timer = window.setInterval(refreshBalance, 30000)
+    window.addEventListener('platform-billing-updated', refreshBalance)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+      window.removeEventListener('platform-billing-updated', refreshBalance)
+    }
+  }, [activeProfile.baseUrl, platformMode])
 
   const installTooltip = useTooltip()
   const helpTooltip = useTooltip()
@@ -154,7 +230,7 @@ export default function Header() {
                 <>
                   <span className="min-w-0 truncate text-[17px] font-bold tracking-tight text-gray-800 dark:text-gray-100 sm:hidden" title={favoriteCollectionTitle}>{favoriteCollectionTitle}</span>
                   <a
-                    href="https://github.com/CookSleep/gpt_image_playground"
+                    href="#"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="hidden text-lg font-bold tracking-tight text-gray-800 transition-colors hover:text-gray-600 dark:text-gray-100 dark:hover:text-gray-300 sm:inline"
@@ -252,6 +328,21 @@ export default function Header() {
             </button>
           </div>
           <div className="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                if (!platformMode) {
+                  handleEnablePlatformMode()
+                  return
+                }
+                platformAuthRequired ? setShowPlatformAuth(true) : setShowPlatformBilling(true)
+              }}
+              className={`hidden sm:inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors ${platformMode ? 'border-blue-200/70 bg-blue-50/80 text-blue-700 hover:bg-blue-100 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-200 dark:hover:bg-blue-500/15' : 'border-amber-200/70 bg-amber-50/80 text-amber-700 hover:bg-amber-100 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200 dark:hover:bg-amber-500/15'}`}
+              title={platformMode ? '平台积分余额' : '商业化平台入口：请在设置中切换到平台托管配置'}
+            >
+              <span>{platformMode ? (platformAuthRequired ? '登录' : '积分') : '平台版'}</span>
+              {platformMode && !platformAuthRequired && <span>{platformBalance == null ? '—' : platformBalance}</span>}
+            </button>
             {!isPwaInstalled && (
               <div
                 className="relative"
@@ -307,7 +398,20 @@ export default function Header() {
             </div>
           </div>
         </div>
-        <div className={`safe-area-x sm:hidden overflow-hidden transition-all duration-300 ease-in-out ${appMode === 'gallery' && scrollDirection === 'down' ? 'max-h-0 opacity-0 pb-0' : 'max-h-20 opacity-100 pb-2'}`}>
+        <div className={`safe-area-x sm:hidden overflow-hidden transition-all duration-300 ease-in-out ${appMode === 'gallery' && scrollDirection === 'down' ? 'max-h-0 opacity-0 pb-0' : 'max-h-24 opacity-100 pb-2'}`}>
+          <button
+            type="button"
+            onClick={() => {
+              if (!platformMode) {
+                handleEnablePlatformMode()
+                return
+              }
+              platformAuthRequired ? setShowPlatformAuth(true) : setShowPlatformBilling(true)
+            }}
+            className={`mx-2 mb-1 flex w-[calc(100%-1rem)] items-center justify-center rounded-lg border px-2 py-1 text-xs font-semibold ${platformMode ? 'border-blue-200/70 bg-blue-50/80 text-blue-700 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-200' : 'border-amber-200/70 bg-amber-50/80 text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200'}`}
+          >
+            {platformMode ? (platformAuthRequired ? '登录平台账号' : `平台积分：${platformBalance == null ? '—' : platformBalance}`) : '平台商业版入口 · 点击配置'}
+          </button>
           <div className="grid grid-cols-2 gap-1 rounded-xl border border-gray-200 dark:border-white/[0.08] bg-gray-100/70 dark:bg-white/[0.04] p-1 mx-2">
             <button
               type="button"
@@ -336,12 +440,28 @@ export default function Header() {
 
       <div className={`safe-area-top invisible pointer-events-none transition-all duration-300 ease-in-out ${appMode === 'agent' && !agentMobileHeaderVisible ? 'max-h-0 sm:max-h-[500px] opacity-0 sm:opacity-100 overflow-hidden sm:overflow-visible' : 'max-h-[500px] opacity-100'}`} aria-hidden="true">
         <div className="safe-header-inner" />
-        <div className={`safe-area-x sm:hidden overflow-hidden transition-all duration-300 ease-in-out ${appMode === 'gallery' && scrollDirection === 'down' ? 'max-h-0 pb-0' : 'max-h-20 pb-2'}`}>
+        <div className={`safe-area-x sm:hidden overflow-hidden transition-all duration-300 ease-in-out ${appMode === 'gallery' && scrollDirection === 'down' ? 'max-h-0 pb-0' : 'max-h-24 pb-2'}`}>
           <div className="p-1">
             <div className="py-1.5 text-sm">占位</div>
           </div>
         </div>
       </div>
+      {showPlatformBilling && platformMode && (
+        <PlatformBillingModal
+          baseUrl={activeProfile.baseUrl}
+          onClose={() => setShowPlatformBilling(false)}
+        />
+      )}
+      {showPlatformAuth && platformMode && (
+        <PlatformAuthModal
+          baseUrl={activeProfile.baseUrl}
+          onClose={() => setShowPlatformAuth(false)}
+          onAuthenticated={() => {
+            setPlatformAuthRequired(false)
+            window.dispatchEvent(new Event('platform-billing-updated'))
+          }}
+        />
+      )}
       {showHelp && <HelpModal appMode={appMode} isFavoriteCollectionOverview={appMode === 'gallery' && filterFavorite && !activeFavoriteCollectionId} onClose={() => setShowHelp(false)} />}
     </>
   )

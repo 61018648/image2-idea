@@ -60,11 +60,24 @@ export interface PaymentEvent {
   raw: unknown
 }
 
+export interface BillingAdminStats {
+  users: number
+  orders: number
+  paidOrders: number
+  pendingOrders: number
+  revenueCents: number
+  creditsIssued: number
+  creditsDebited: number
+  availableCredits: number
+}
+
 export interface BillingStore {
   getOrCreateAccount(userId: string): Promise<UserAccount>
   getBalance(userId: string): Promise<Balance>
   listLedger(userId: string, limit?: number): Promise<LedgerEntry[]>
   listPlans(): Promise<Plan[]>
+  listOrders(userId: string, limit?: number): Promise<Order[]>
+  getAdminStats(): Promise<BillingAdminStats>
   createOrder(userId: string, planId: string, provider?: PaymentProvider): Promise<Order>
   markOrderPaid(input: {
     orderId: string

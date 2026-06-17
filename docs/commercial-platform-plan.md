@@ -2,6 +2,42 @@
 
 本文档面向当前 `gpt-image-playground` 项目，目标是把现有纯前端个人工具改造成可注册、可付费、可控成本、可运营的多用户生图平台。
 
+## 当前实施进度
+
+更新时间：2026-06-17。
+
+### 已完成
+
+- 已新增独立平台后端骨架，位置为 `server/`，包含账户、余额、账本、套餐、订单、支付回调和平台托管生图接口。
+- 已完成平台托管模式前端入口，`src/lib/api.ts` 可按 `platform` 服务商分发到 `/api/platform/images/generations`。
+- 已完成平台托管同步生图 MVP：后端校验会话、估算积分、预扣积分、调用上游 OpenAI 兼容图片接口，失败时自动退款。
+- 已完成 PostgreSQL/Prisma 持久化账本代码准备，新增 `server/prisma/schema.prisma`、初始 migration、`PrismaBillingStore` 和 `DATABASE_URL` 自动切换逻辑。
+- 已保留未安装数据库时的开发模式：未设置 `DATABASE_URL` 时继续使用内存存储或 `PLATFORM_DATA_FILE` JSON 存储。
+- 已验证后端测试和构建：`npm test` 通过 2 个测试文件、6 个测试；`npm run build` 通过。
+- 已开始实现任务化生图 MVP：新增 `/api/platform/generations` 创建/查询任务接口，当前先用内存任务存储，后台异步执行并复用积分预扣/失败退款流程。
+- 已完成前端平台模式的任务化 API 适配：`platform` 服务商会创建平台任务并轮询任务结果，成功后继续复用现有本地任务展示链路。
+- 已完成 `generation_jobs` 持久化代码准备：Prisma schema 和 migration 已包含任务表，后端可根据 `DATABASE_URL` 在 Prisma 任务 store 与内存任务 store 间自动切换。
+- 已完成本地资产存储接入：后端新增 asset storage 抽象和资产读取路由，平台任务成功结果会保存为 `/api/platform/assets/...` URL，前端会下载该 URL 并复用现有 IndexedDB 展示链路。
+- 已完成最小平台余额展示：当前 API 配置为 `platform` 时，Header 会调用 `/api/platform/balance` 并展示积分余额，为后续用户中心和充值入口做准备。
+- 已完成平台账单中心 MVP：Header 固定展示“平台版/登录/积分”入口，首页新增商业化状态卡并支持一键启用/创建平台托管配置，入口可打开账单弹窗，展示用户、余额、商业化状态、运营概览、套餐、最近订单、最近平台任务和最近流水；开发态支持创建订单和模拟支付入账，真实登录态已接入 checkout 占位订单契约。
+- 已完成真实登录/注册 MVP 代码接入：后端新增 email/password 注册登录、HttpOnly Cookie session 和退出接口；前端新增平台登录/注册弹窗，未登录时 Header 显示登录入口。真实登录需要 `DATABASE_URL` 和 `PLATFORM_SESSION_SECRET`，开发模式仍可无数据库运行。
+
+### 当前限制
+
+- 当前机器尚未安装 PostgreSQL，也未配置 `DATABASE_URL`，因此 Prisma migration 尚未连接真实数据库执行。
+- 当前任务化生图已经有内存版 API 骨架、前端轮询适配和 Prisma 持久化代码，但由于本机尚未安装 PostgreSQL，尚未在真实数据库中执行 migration。
+- 当前已开始将平台任务结果从 base64/data URL 改为本地 asset URL，但尚未接正式对象存储和 CDN。
+- 当前真实注册登录已具备 MVP 代码，但由于本机尚未安装 PostgreSQL，尚未在真实数据库环境执行 migration 和端到端验证；legacy 网关注入 token/user id 仍保留为兼容 fallback。
+- 当前支付只具备回调骨架和幂等入账逻辑，尚未接入 Stripe、微信或支付宝真实验签。
+
+### 下一步执行顺序
+
+1. 安装 PostgreSQL 后在 `server/` 下执行 `npm run db:migrate`，把用户、账本、订单和任务数据落到真实数据库。
+2. 配置 `PLATFORM_SESSION_SECRET`，在真实数据库环境端到端验证注册、登录、退出、余额、账单中心和平台生图任务链路。
+3. 把开发态购买替换为真实支付收银台，并接入 Stripe、微信或支付宝服务端验签。
+4. 把本地 asset storage 替换为正式对象存储（S3/R2/OSS/COS）和 CDN。
+5. 增加管理后台：用户、订单、任务、额度调整、成本统计和风控。
+
 ## 1. 当前项目现状
 
 当前项目适合作为商业化平台的前端基础，但不适合直接收费上线。

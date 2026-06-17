@@ -1,10 +1,14 @@
 import { getApiErrorMessage } from './imageApiShared'
 import type {
+  PlatformAdminStatsResponse,
   PlatformBalanceResponse,
+  PlatformCheckoutResponse,
+  PlatformCreateCheckoutRequest,
   PlatformCreateOrderRequest,
   PlatformCreateOrderResponse,
   PlatformLedgerResponse,
   PlatformMeResponse,
+  PlatformOrdersResponse,
   PlatformPlansResponse,
 } from './platformApiContracts'
 
@@ -47,8 +51,35 @@ export function getPlatformPlans(baseUrl = ''): Promise<PlatformPlansResponse> {
   return requestJson<PlatformPlansResponse>(baseUrl, '/plans')
 }
 
+export function getPlatformAdminStats(baseUrl = ''): Promise<PlatformAdminStatsResponse> {
+  return requestJson<PlatformAdminStatsResponse>(baseUrl, '/admin/stats')
+}
+
+export function listPlatformOrders(baseUrl = '', limit = 20): Promise<PlatformOrdersResponse> {
+  return requestJson<PlatformOrdersResponse>(baseUrl, `/orders?limit=${encodeURIComponent(String(limit))}`)
+}
+
 export function createPlatformOrder(baseUrl: string, request: PlatformCreateOrderRequest): Promise<PlatformCreateOrderResponse> {
   return requestJson<PlatformCreateOrderResponse>(baseUrl, '/orders', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  })
+}
+
+export function createPlatformCheckout(baseUrl: string, request: PlatformCreateCheckoutRequest): Promise<PlatformCheckoutResponse> {
+  return requestJson<PlatformCheckoutResponse>(baseUrl, '/checkout', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  })
+}
+
+export function notifyDevPlatformPayment(baseUrl: string, request: {
+  provider: 'dev'
+  providerEventId: string
+  orderId: string
+  paidAmountCents: number
+}): Promise<unknown> {
+  return requestJson<unknown>(baseUrl, '/payments/notify', {
     method: 'POST',
     body: JSON.stringify(request),
   })
