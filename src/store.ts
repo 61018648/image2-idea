@@ -18,8 +18,9 @@ import type {
   ResponsesOutputItem,
 } from './types'
 import { DEFAULT_AGENT_MAX_TOOL_ROUNDS, DEFAULT_PARAMS } from './types'
-import { DEFAULT_SETTINGS, getActiveApiProfile, getCustomProviderDefinition, mergeImportedSettings, normalizeSettings, validateApiProfile } from './lib/apiProfiles'
+import { DEFAULT_SETTINGS, createDefaultPlatformProfile, getActiveApiProfile, getCustomProviderDefinition, mergeImportedSettings, normalizeSettings, validateApiProfile } from './lib/apiProfiles'
 import { dismissAllTooltips } from './lib/tooltipDismiss'
+import { getPlatformAuthSession } from './lib/platformAuthApi'
 import { remapImageMentionsForOrder, replaceImageMentionsForApi } from './lib/promptImageMentions'
 import {
   CURRENT_THUMBNAIL_VERSION,
@@ -719,7 +720,7 @@ function mergePersistedState(persistedState: unknown, currentState: AppState): A
     typeof persisted.activeAgentConversationId === 'string' && (!hasPersistedAgentConversations || agentConversations.some((conversation) => conversation.id === persisted.activeAgentConversationId))
       ? persisted.activeAgentConversationId
       : agentConversations[0]?.id ?? null
-  const appMode = persisted.appMode === 'agent' ? 'agent' : 'gallery'
+  const appMode = persisted.appMode === 'agent' || persisted.appMode === 'auth' || persisted.appMode === 'user-center' || persisted.appMode === 'admin' ? persisted.appMode : 'gallery'
   const galleryInputDraft = settings.persistInputOnRestart
     ? normalizeAgentInputDraft(persisted.galleryInputDraft ?? {
         prompt: persisted.prompt,
@@ -1147,7 +1148,7 @@ export const useStore = create<AppState>()(
       // Mode
       appMode: 'gallery',
       setAppMode: (appMode) => {
-        if (appMode === 'gallery') {
+        if (appMode === 'gallery' || appMode === 'auth' || appMode === 'user-center' || appMode === 'admin') {
           const state = get()
           const agentInputDrafts = saveActiveAgentInputDrafts(state)
           const galleryInputDraft = saveGalleryInputDraft(state)
@@ -1159,7 +1160,7 @@ export const useStore = create<AppState>()(
             selectedTaskIds: [],
             selectedFavoriteCollectionIds: [],
             agentEditingRoundId: null,
-            ...(state.appMode === 'agent' ? restoreGalleryInputDraftState(galleryInputDraft) : {}),
+            ...(state.appMode === 'agent' && appMode === 'gallery' ? restoreGalleryInputDraftState(galleryInputDraft) : {}),
           }))
           return
         }
@@ -2254,13 +2255,37 @@ export async function initStore() {
 
 /** 提交新任务 */
 export async function submitTask(options: { allowFullMask?: boolean; useCurrentApiProfileWhenReusedMissing?: boolean } = {}) {
-  const { settings, prompt, inputImages, maskDraft, params, reusedTaskApiProfileId, reusedTaskApiProfileName, reusedTaskApiProfileMissing, showToast, setConfirmDialog } =
+  const { settings, prompt, inputImages, maskDraft, params, reusedTaskApiProfileId, reusedTaskApiProfileName, reusedTaskApiProfileMissing, showToast, setConfirmDialog, appMode } =
     useStore.getState()
 
   const normalizedSettings = normalizeSettings(settings)
+  let requestBaseSettings = normalizedSettings
+  const isGallerySubmit = appMode === 'gallery'
+  const existingPlatformProfile = normalizedSettings.profiles.find((profile) => profile.provider === 'platform')
+  const platformProfile = existingPlatformProfile ?? createDefaultPlatformProfile()
   let activeProfile = getActiveApiProfile(settings)
-  let requestSettings = createSettingsForApiProfile(normalizedSettings, activeProfile)
-  if (normalizedSettings.reuseTaskApiProfileTemporarily && (reusedTaskApiProfileId || reusedTaskApiProfileMissing)) {
+  if (isGallerySubmit) {
+    activeProfile = platformProfile
+    if (!existingPlatformProfile || normalizedSettings.activeProfileId !== platformProfile.id) {
+      const nextProfiles = existingPlatformProfile
+        ? normalizedSettings.profiles
+        : [...normalizedSettings.profiles, platformProfile]
+      requestBaseSettings = normalizeSettings({
+        ...normalizedSettings,
+        profiles: nextProfiles,
+        activeProfileId: platformProfile.id,
+      })
+      useStore.getState().setSettings({
+        profiles: nextProfiles,
+        activeProfileId: platformProfile.id,
+      })
+      window.dispatchEvent(new Event('platform-billing-updated'))
+    } else {
+      requestBaseSettings = normalizedSettings
+    }
+  }
+  let requestSettings = createSettingsForApiProfile(requestBaseSettings, activeProfile)
+  if (!isGallerySubmit && normalizedSettings.reuseTaskApiProfileTemporarily && (reusedTaskApiProfileId || reusedTaskApiProfileMissing)) {
     const reusedProfile = getReusedTaskApiProfile(normalizedSettings, reusedTaskApiProfileId)
     if (!reusedProfile) {
       if (options.useCurrentApiProfileWhenReusedMissing) {
@@ -2283,7 +2308,18 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
     }
   }
 
-  if (validateApiProfile(activeProfile)) {
+  if (isGallerySubmit) {
+    try {
+      await getPlatformAuthSession(platformProfile.baseUrl)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      if (message !== 'Unauthorized') showToast(message, 'error')
+      else showToast('请先登录后再生成图片', 'info')
+      window.history.pushState(null, '', '/auth')
+      useStore.getState().setAppMode('auth')
+      return
+    }
+  } else if (validateApiProfile(activeProfile)) {
     showToast(`请先完善请求 API 配置：${validateApiProfile(activeProfile)}`, 'error')
     useStore.getState().setShowSettings(true)
     return
@@ -4268,6 +4304,11 @@ async function executeTask(taskId: string) {
       scheduleCustomRecovery(taskId)
     } else {
       let errorMessage = err instanceof Error ? err.message : String(err)
+      if (/Insufficient credits|insufficient_credits|余额不足/i.test(errorMessage)) {
+        useStore.getState().showToast('余额不足，请先充值后再生成图片', 'error')
+        window.history.pushState(null, '', '/user?tab=plans')
+        useStore.getState().setAppMode('user-center')
+      }
       const settings = useStore.getState().settings
       const profile = getTaskApiProfile(settings, latestTask)
       const usesApiProxy = profile?.apiProxy ?? settings.apiProxy

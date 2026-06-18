@@ -1,5 +1,5 @@
 import { readRequiredSession } from '../auth/session.js'
-import { quoteImageCredits } from '../billing/quote.js'
+import { quoteImageCreditsFromConfig } from '../billing/quote.js'
 import { getBillingStore } from '../billing/store.js'
 import { errorResponse, isSameOrigin, jsonResponse, readJsonRequest } from '../http.js'
 import { getAssetStorage } from '../assets/storage.js'
@@ -92,7 +92,7 @@ async function saveGeneratedImages(jobId: string, userId: string, images: string
   return savedUrls
 }
 
-async function executeGenerationJob(jobId: string, userId: string) {
+async function executeGenerationJob(jobId: string, userId: string, debit: Awaited<ReturnType<ReturnType<typeof getBillingStore>['debitGeneration']>>) {
   const jobStore = getGenerationJobStore()
   const job = await jobStore.markRunning(jobId)
   if (!job) return
@@ -110,9 +110,9 @@ async function executeGenerationJob(jobId: string, userId: string) {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     await jobStore.markFailed(jobId, message)
-    await getBillingStore().refundCredits({
+    await getBillingStore().refundGeneration({
       userId,
-      amount: job.costCredits,
+      debit,
       sourceId: jobId,
       description: 'Image generation failed refund',
     }).catch(() => undefined)
@@ -147,12 +147,13 @@ export async function handleGenerationsRequest(request: Request): Promise<Respon
 
   try {
     const normalized = normalizeRequest(await readJsonRequest<CreateGenerationBody>(request))
-    const creditsQuoted = quoteImageCredits(normalized.params)
+    const creditsQuoted = await quoteImageCreditsFromConfig(normalized.params)
     const jobId = genJobId(session.userId)
     const store = getBillingStore()
-    await store.debitCredits({
+    const debit = await store.debitGeneration({
       userId: session.userId,
-      amount: creditsQuoted,
+      creditAmount: creditsQuoted,
+      packageUses: normalized.params.n,
       sourceId: jobId,
       description: `Image generation: ${normalized.params.n} image(s)`,
     })
@@ -164,12 +165,12 @@ export async function handleGenerationsRequest(request: Request): Promise<Respon
       costCredits: creditsQuoted,
     })
 
-    void executeGenerationJob(job.id, session.userId)
+    void executeGenerationJob(job.id, session.userId, debit)
 
     return jsonResponse({
       job: mapJobResponse(job),
       creditsQuoted,
-      creditsCharged: creditsQuoted,
+      creditsCharged: debit.chargedCredits,
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)

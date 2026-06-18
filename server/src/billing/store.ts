@@ -1,15 +1,18 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { getPrismaClient } from '../db/prisma.js'
+import { useMysqlCompat } from '../db/mysqlCompat.js'
 import { DEFAULT_PLANS } from './plans.js'
+import { createMysqlBillingStore } from './mysqlStore.js'
 import { createPrismaBillingStore } from './prismaStore.js'
-import type { Balance, BillingStore, LedgerEntry, Order, PaymentEvent, PaymentProvider, Plan, UserAccount } from './types.js'
+import type { Balance, BillingStore, GenerationDebit, LedgerEntry, Order, PaymentEvent, PaymentProvider, Plan, UserAccount, UserPlanPackage } from './types.js'
 
 interface BillingState {
   accounts: Record<string, UserAccount>
   balances: Record<string, Balance>
   ledger: LedgerEntry[]
   plans: Plan[]
+  packages: UserPlanPackage[]
   orders: Record<string, Order>
   paymentEvents: Record<string, PaymentEvent>
 }
@@ -19,6 +22,7 @@ const EMPTY_STATE: BillingState = {
   balances: {},
   ledger: [],
   plans: DEFAULT_PLANS,
+  packages: [],
   orders: {},
   paymentEvents: {},
 }
@@ -33,12 +37,18 @@ function genId(prefix: string) {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`
 }
 
+function genOrderId() {
+  const stamp = new Date().toISOString().replace(/\D/g, '').slice(0, 14)
+  return `order_${stamp}${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`
+}
+
 function cloneState(state: BillingState): BillingState {
   return {
     accounts: { ...state.accounts },
     balances: { ...state.balances },
     ledger: [...state.ledger],
     plans: [...state.plans],
+    packages: [...state.packages],
     orders: { ...state.orders },
     paymentEvents: { ...state.paymentEvents },
   }
@@ -98,6 +108,7 @@ async function loadState(file: string): Promise<BillingState> {
       balances: parsed.balances ?? {},
       ledger: Array.isArray(parsed.ledger) ? parsed.ledger : [],
       plans: Array.isArray(parsed.plans) && parsed.plans.length ? parsed.plans : DEFAULT_PLANS,
+      packages: Array.isArray(parsed.packages) ? parsed.packages : [],
       orders: parsed.orders ?? {},
       paymentEvents: parsed.paymentEvents ?? {},
     }
@@ -141,6 +152,27 @@ function createStore(initial: BillingState): BillingStore {
     async listPlans() {
       return mutate((draft) => [...draft.plans])
     },
+    async upsertPlan(plan) {
+      return mutate((draft) => {
+        const normalized: Plan = {
+          id: plan.id.trim(),
+          name: plan.name.trim(),
+          credits: Math.max(1, Math.trunc(plan.credits)),
+          priceCents: Math.max(0, Math.trunc(plan.priceCents)),
+          currency: plan.currency === 'USD' ? 'USD' : 'CNY',
+          enabled: Boolean(plan.enabled),
+        }
+        if (!normalized.id) throw new Error('Plan ID is required')
+        if (!normalized.name) throw new Error('Plan name is required')
+        const index = draft.plans.findIndex((item) => item.id === normalized.id)
+        if (index >= 0) draft.plans[index] = normalized
+        else draft.plans.push(normalized)
+        return normalized
+      })
+    },
+    async listUserPlanPackages(userId) {
+      return mutate((draft) => draft.packages.filter((item) => item.userId === userId).sort((a, b) => a.createdAt.localeCompare(b.createdAt)))
+    },
     async listOrders(userId, limit = 20) {
       return mutate((draft) => Object.values(draft.orders)
         .filter((order) => order.userId === userId)
@@ -170,7 +202,7 @@ function createStore(initial: BillingState): BillingStore {
         const plan = getPlan(draft, planId)
         if (!plan) throw new Error('Plan not found')
         const order: Order = {
-          id: genId('ord'),
+          id: genOrderId(),
           userId,
           planId,
           status: 'pending',
@@ -217,18 +249,22 @@ function createStore(initial: BillingState): BillingStore {
           raw: input.raw,
         }
 
-        const account = ensureAccount(draft, order.userId)
-        void account
-        const currentBalance = ensureBalance(draft, order.userId)
-        const entry = addLedgerEntry(draft, {
-          userId: order.userId,
-          type: 'purchase',
-          amount: plan.credits,
-          source: 'payment_notify',
-          sourceId: order.id,
-          description: `Purchase ${plan.id}`,
-        })
-        return { order: updatedOrder, ledgerEntry: entry, duplicate: false as const }
+        ensureAccount(draft, order.userId)
+        if (!draft.packages.some((item) => item.orderId === order.id)) {
+          const createdAt = now()
+          draft.packages.push({
+            id: genId('pkg'),
+            userId: order.userId,
+            planId: order.planId,
+            orderId: order.id,
+            totalUses: plan.credits,
+            remainingUses: plan.credits,
+            status: 'active',
+            createdAt,
+            updatedAt: createdAt,
+          })
+        }
+        return { order: updatedOrder, duplicate: false as const }
       })
     },
     async debitCredits(input) {
@@ -275,6 +311,72 @@ function createStore(initial: BillingState): BillingStore {
         return { balance: draft.balances[input.userId], ledgerEntry: entry, duplicate: false as const }
       })
     },
+    async debitGeneration(input) {
+      return mutate((draft) => {
+        ensureAccount(draft, input.userId)
+        const uses = Math.max(1, Math.trunc(input.packageUses || 1))
+        const pkg = draft.packages.find((item) => item.userId === input.userId && item.status === 'active' && item.remainingUses >= uses)
+        if (pkg) {
+          pkg.remainingUses -= uses
+          pkg.updatedAt = now()
+          if (pkg.remainingUses <= 0) pkg.status = 'depleted'
+          return { mode: 'package', chargedCredits: 0, chargedPackageUses: uses, package: pkg } satisfies GenerationDebit
+        }
+        const balance = ensureBalance(draft, input.userId)
+        const amount = Math.max(1, Math.trunc(input.creditAmount || 1))
+        if (balance.availableCredits - amount < 0) throw new Error('Insufficient credits')
+        const entry = addLedgerEntry(draft, {
+          userId: input.userId,
+          type: 'debit',
+          amount: -amount,
+          source: 'image_generation',
+          sourceId: input.sourceId,
+          description: input.description,
+        })
+        return { mode: 'credits', chargedCredits: amount, chargedPackageUses: 0, balance: draft.balances[input.userId], ledgerEntry: entry } satisfies GenerationDebit
+      })
+    },
+    async refundGeneration(input) {
+      await mutate((draft) => {
+        if (input.debit.mode === 'package' && input.debit.package) {
+          const pkg = draft.packages.find((item) => item.id === input.debit.package?.id)
+          if (!pkg) return
+          pkg.remainingUses = Math.min(pkg.totalUses, pkg.remainingUses + Math.max(1, input.debit.chargedPackageUses))
+          pkg.status = pkg.remainingUses > 0 ? 'active' : 'depleted'
+          pkg.updatedAt = now()
+          return
+        }
+        if (input.debit.mode === 'credits' && input.debit.chargedCredits > 0) {
+          if (readLedgerSourceIdExists(draft, `refund:${input.sourceId}`)) return
+          addLedgerEntry(draft, {
+            userId: input.userId,
+            type: 'refund',
+            amount: input.debit.chargedCredits,
+            source: 'image_generation',
+            sourceId: `refund:${input.sourceId}`,
+            description: input.description,
+          })
+        }
+      })
+    },
+    async adjustCredits(input) {
+      return mutate((draft) => {
+        ensureAccount(draft, input.userId)
+        const balance = ensureBalance(draft, input.userId)
+        const amount = Math.trunc(input.amount)
+        if (!amount) throw new Error('Adjustment amount is required')
+        if (balance.availableCredits + amount < 0) throw new Error('Insufficient credits')
+        const entry = addLedgerEntry(draft, {
+          userId: input.userId,
+          type: amount > 0 ? 'grant' : 'adjustment',
+          amount,
+          source: 'admin',
+          sourceId: genId('admin'),
+          description: input.description || 'Admin credit adjustment',
+        })
+        return { balance: draft.balances[input.userId], ledgerEntry: entry }
+      })
+    },
   }
 }
 
@@ -282,6 +384,10 @@ let storePromise: Promise<BillingStore> | null = null
 let cachedStore: BillingStore | null = null
 
 export async function createBillingStore(): Promise<BillingStore> {
+  if (useMysqlCompat()) {
+    return createMysqlBillingStore()
+  }
+
   if (process.env.DATABASE_URL?.trim()) {
     return createPrismaBillingStore(getPrismaClient())
   }

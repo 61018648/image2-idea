@@ -17,7 +17,7 @@ export default function PlatformAuthModal({ baseUrl, onClose, onAuthenticated }:
   const modalRef = useRef<HTMLDivElement>(null)
   const showToast = useStore((s) => s.showToast)
   const [mode, setMode] = useState<Mode>('login')
-  const [email, setEmail] = useState('')
+  const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -34,7 +34,7 @@ export default function PlatformAuthModal({ baseUrl, onClose, onAuthenticated }:
     setLoading(true)
     setError(null)
     try {
-      const request = { email, password }
+      const request = { username, password }
       if (mode === 'register') {
         await registerPlatformUser(baseUrl, request)
       } else {
@@ -99,12 +99,13 @@ export default function PlatformAuthModal({ baseUrl, onClose, onAuthenticated }:
           <label className="block space-y-2">
             <span className="text-sm font-medium text-gray-700 dark:text-gray-200">邮箱</span>
             <input
-              type="email"
+              type="text"
               required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              minLength={3}
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
               className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-100"
-              placeholder="name@example.com"
+              placeholder="请输入用户名"
             />
           </label>
           <label className="block space-y-2">

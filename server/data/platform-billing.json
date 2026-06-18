@@ -1,0 +1,119 @@
+{
+  "accounts": {
+    "dev-user": {
+      "userId": "dev-user",
+      "createdAt": "2026-06-18T03:21:39.547Z"
+    }
+  },
+  "balances": {
+    "dev-user": {
+      "userId": "dev-user",
+      "availableCredits": 200,
+      "updatedAt": "2026-06-18T03:26:42.037Z"
+    }
+  },
+  "ledger": [
+    {
+      "id": "led_qseos0vo",
+      "createdAt": "2026-06-18T03:26:42.037Z",
+      "balanceAfter": 200,
+      "userId": "dev-user",
+      "type": "purchase",
+      "amount": 100,
+      "source": "payment_notify",
+      "sourceId": "ord_xp5em9sm",
+      "description": "Purchase dev-small"
+    },
+    {
+      "id": "led_nd1y8ag3",
+      "createdAt": "2026-06-18T03:23:43.965Z",
+      "balanceAfter": 100,
+      "userId": "dev-user",
+      "type": "purchase",
+      "amount": 100,
+      "source": "payment_notify",
+      "sourceId": "ord_7h3aggsh",
+      "description": "Purchase dev-small"
+    }
+  ],
+  "plans": [
+    {
+      "id": "dev-small",
+      "name": "Small",
+      "credits": 100,
+      "priceCents": 500,
+      "currency": "USD",
+      "enabled": true
+    },
+    {
+      "id": "dev-medium",
+      "name": "Medium",
+      "credits": 500,
+      "priceCents": 2000,
+      "currency": "USD",
+      "enabled": true
+    },
+    {
+      "id": "dev-free",
+      "name": "Free Trial",
+      "credits": 20,
+      "priceCents": 0,
+      "currency": "USD",
+      "enabled": true
+    }
+  ],
+  "orders": {
+    "ord_7h3aggsh": {
+      "id": "ord_7h3aggsh",
+      "userId": "dev-user",
+      "planId": "dev-small",
+      "status": "paid",
+      "amountCents": 500,
+      "currency": "USD",
+      "credits": 100,
+      "provider": "dev",
+      "createdAt": "2026-06-18T03:23:43.864Z",
+      "paidAt": "2026-06-18T03:23:43.965Z"
+    },
+    "ord_xp5em9sm": {
+      "id": "ord_xp5em9sm",
+      "userId": "dev-user",
+      "planId": "dev-small",
+      "status": "paid",
+      "amountCents": 500,
+      "currency": "USD",
+      "credits": 100,
+      "provider": "dev",
+      "createdAt": "2026-06-18T03:26:41.854Z",
+      "paidAt": "2026-06-18T03:26:42.035Z"
+    }
+  },
+  "paymentEvents": {
+    "dev:evt-local-ord_7h3aggsh": {
+      "id": "evt_qknnin5v",
+      "provider": "dev",
+      "providerEventId": "evt-local-ord_7h3aggsh",
+      "orderId": "ord_7h3aggsh",
+      "processedAt": "2026-06-18T03:23:43.965Z",
+      "raw": {
+        "orderId": "ord_7h3aggsh",
+        "provider": "dev",
+        "providerEventId": "evt-local-ord_7h3aggsh",
+        "paidAmountCents": 500
+      }
+    },
+    "dev:evt-dev-ord_xp5em9sm": {
+      "id": "evt_6r0i9y60",
+      "provider": "dev",
+      "providerEventId": "evt-dev-ord_xp5em9sm",
+      "orderId": "ord_xp5em9sm",
+      "processedAt": "2026-06-18T03:26:42.035Z",
+      "raw": {
+        "provider": "dev",
+        "providerEventId": "evt-dev-ord_xp5em9sm",
+        "orderId": "ord_xp5em9sm",
+        "paidAmountCents": 500
+      }
+    }
+  }
+}

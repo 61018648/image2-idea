@@ -189,7 +189,7 @@ export default function PlatformBillingModal({ baseUrl, onClose }: PlatformBilli
   const handleCreateCheckout = async (plan: PlatformPlanResponse) => {
     setWorkingPlanId(plan.id)
     try {
-      const { checkout } = await createPlatformCheckout(baseUrl, { planId: plan.id, provider: 'stripe' })
+      const { checkout } = await createPlatformCheckout(baseUrl, { planId: plan.id, provider: 'epay' })
       await refresh()
       if (checkout.checkoutUrl) {
         window.location.href = checkout.checkoutUrl

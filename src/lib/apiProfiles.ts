@@ -20,6 +20,7 @@ import { isImportableConfigUrl } from './customProviderConfigUrl'
 
 const OPENAI_DEFAULT_BASE_URL = 'https://api.openai.com/v1'
 const RAW_DEFAULT_API_URL = readRuntimeEnv(import.meta.env.VITE_DEFAULT_API_URL)
+const DEFAULT_PROVIDER = readRuntimeEnv(import.meta.env.VITE_DEFAULT_PROVIDER)
 const DEFAULT_OPENAI_API_PROXY = readRuntimeEnv(import.meta.env.VITE_API_PROXY_AVAILABLE) === 'true'
 const DOCKER_DEPLOYMENT = readRuntimeEnv(import.meta.env.VITE_DOCKER_DEPLOYMENT) === 'true'
 const DEFAULT_BASE_URL = isImportableConfigUrl(RAW_DEFAULT_API_URL)
@@ -335,7 +336,6 @@ export function createDefaultFalProfile(overrides: Partial<ApiProfile> = {}): Ap
 
 export function createDefaultPlatformProfile(overrides: Partial<ApiProfile> = {}): ApiProfile {
   return {
-    id: `platform-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
     name: '平台托管',
     provider: 'platform',
     baseUrl: DEFAULT_PLATFORM_BASE_URL,
@@ -348,7 +348,15 @@ export function createDefaultPlatformProfile(overrides: Partial<ApiProfile> = {}
     streamImages: false,
     streamPartialImages: DEFAULT_STREAM_PARTIAL_IMAGES,
     ...overrides,
+    id: overrides.id ?? `platform-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
   }
+}
+
+function createInitialProfile(): ApiProfile {
+  if (DEFAULT_PROVIDER === 'platform') {
+    return createDefaultPlatformProfile({ id: 'default-platform' })
+  }
+  return createDefaultOpenAIProfile()
 }
 
 export function switchApiProfileProvider(profile: ApiProfile, provider: ApiProvider, customProvider?: CustomProviderDefinition): ApiProfile {
@@ -548,7 +556,7 @@ export function normalizeSettings(input: Partial<AppSettings> | unknown): AppSet
   })
   const profiles = Array.isArray(record.profiles) && record.profiles.length
     ? record.profiles.map((profile) => normalizeApiProfile(profile, undefined, customProviderIds))
-    : [legacyProfile]
+    : [DEFAULT_PROVIDER === 'platform' ? createDefaultPlatformProfile({ id: 'default-platform' }) : legacyProfile]
   const activeProfileId = typeof record.activeProfileId === 'string' && profiles.some((p) => p.id === record.activeProfileId)
     ? record.activeProfileId
     : profiles[0].id
@@ -863,6 +871,8 @@ export const DEFAULT_SETTINGS: AppSettings = normalizeSettings({
   streamImages: false,
   streamPartialImages: DEFAULT_STREAM_PARTIAL_IMAGES,
   customProviders: [],
+  profiles: [createInitialProfile()],
+  activeProfileId: DEFAULT_PROVIDER === 'platform' ? 'default-platform' : DEFAULT_OPENAI_PROFILE_ID,
   clearInputAfterSubmit: false,
   persistInputOnRestart: true,
   reuseTaskApiProfileTemporarily: false,

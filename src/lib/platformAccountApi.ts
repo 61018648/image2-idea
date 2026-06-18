@@ -9,7 +9,9 @@ import type {
   PlatformLedgerResponse,
   PlatformMeResponse,
   PlatformOrdersResponse,
+  PlatformUserPlanPackagesResponse,
   PlatformPlansResponse,
+  PlatformUpdateProfileRequest,
 } from './platformApiContracts'
 
 const PLATFORM_API_PREFIX = '/api/platform'
@@ -39,12 +41,23 @@ export function getPlatformMe(baseUrl = ''): Promise<PlatformMeResponse> {
   return requestJson<PlatformMeResponse>(baseUrl, '/me')
 }
 
+export function updatePlatformMe(baseUrl = '', request: PlatformUpdateProfileRequest): Promise<PlatformMeResponse> {
+  return requestJson<PlatformMeResponse>(baseUrl, '/me', {
+    method: 'PATCH',
+    body: JSON.stringify(request),
+  })
+}
+
 export function getPlatformBalance(baseUrl = ''): Promise<PlatformBalanceResponse> {
   return requestJson<PlatformBalanceResponse>(baseUrl, '/balance')
 }
 
 export function getPlatformLedger(baseUrl = '', limit = 50): Promise<PlatformLedgerResponse> {
   return requestJson<PlatformLedgerResponse>(baseUrl, `/ledger?limit=${encodeURIComponent(String(limit))}`)
+}
+
+export function getPlatformPackages(baseUrl = ''): Promise<PlatformUserPlanPackagesResponse> {
+  return requestJson<PlatformUserPlanPackagesResponse>(baseUrl, '/packages')
 }
 
 export function getPlatformPlans(baseUrl = ''): Promise<PlatformPlansResponse> {

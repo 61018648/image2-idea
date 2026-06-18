@@ -56,11 +56,13 @@ export interface PlatformApiErrorResponse {
 export interface PlatformUserInfo {
   id: string
   mode: 'development' | 'authenticated'
+  username?: string | null
   email?: string | null
+  role?: 'user' | 'admin'
 }
 
 export interface PlatformAuthRequest {
-  email: string
+  username: string
   password: string
 }
 
@@ -72,9 +74,18 @@ export interface PlatformMeResponse {
   user: PlatformUserInfo
   account: {
     userId: string
+    phone?: string | null
     displayName?: string
+    avatarUrl?: string | null
     createdAt: string
   }
+}
+
+export interface PlatformUpdateProfileRequest {
+  email?: string | null
+  phone?: string | null
+  displayName?: string | null
+  avatarUrl?: string | null
 }
 
 export interface PlatformBalanceResponse {
@@ -104,17 +115,35 @@ export interface PlatformLedgerResponse {
 export interface PlatformPlanResponse {
   id: string
   name: string
+  /** Included generation uses. Kept as credits for API compatibility. */
   credits: number
   priceCents: number
   currency: 'USD' | 'CNY'
   enabled: boolean
 }
 
+export interface PlatformUserPlanPackageResponse {
+  id: string
+  userId: string
+  planId: string
+  orderId: string
+  totalUses: number
+  remainingUses: number
+  status: 'active' | 'depleted' | 'expired'
+  createdAt: string
+  updatedAt: string
+  expiresAt?: string
+}
+
+export interface PlatformUserPlanPackagesResponse {
+  packages: PlatformUserPlanPackageResponse[]
+}
+
 export interface PlatformPlansResponse {
   plans: PlatformPlanResponse[]
 }
 
-export type PlatformPaymentProvider = 'dev' | 'stripe' | 'wechat' | 'alipay'
+export type PlatformPaymentProvider = 'dev' | 'stripe' | 'wechat' | 'alipay' | 'epay'
 
 export interface PlatformCreateOrderRequest {
   planId: string
@@ -124,6 +153,7 @@ export interface PlatformCreateOrderRequest {
 export interface PlatformCreateCheckoutRequest {
   planId: string
   provider?: Exclude<PlatformPaymentProvider, 'dev'>
+  paymentType?: 'alipay' | 'wxpay' | 'qqpay'
 }
 
 export interface PlatformOrderResponse {
@@ -179,4 +209,197 @@ export interface PlatformAdminStatsResponse {
     succeeded: number
     failed: number
   }
+}
+
+export interface PlatformAdminGenerationLogResponse {
+  id: string
+  userId: string
+  userEmail?: string | null
+  userDisplayName?: string | null
+  status: string
+  prompt: string
+  params: Record<string, unknown>
+  size: string
+  quality: string
+  outputFormat: string
+  outputCompression?: number | null
+  moderation: string
+  n: number
+  inputImageCount: number
+  hasMask: boolean
+  costCredits: number
+  imageCount: number
+  errorMessage?: string | null
+  createdAt: string
+  startedAt?: string | null
+  finishedAt?: string | null
+}
+
+export interface PlatformAdminGenerationLogsResponse {
+  logs: PlatformAdminGenerationLogResponse[]
+}
+
+export interface PlatformAdminUserResponse {
+  id: string
+  username?: string | null
+  email?: string | null
+  phone?: string | null
+  adminNote?: string | null
+  displayName?: string | null
+  avatarUrl?: string | null
+  role: string
+  status: string
+  availableCredits: number
+  orderCount: number
+  paidAmountCents: number
+  lastLoginAt?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface PlatformAdminUsersResponse {
+  users: PlatformAdminUserResponse[]
+}
+
+export interface PlatformAdminOrderResponse extends PlatformOrderResponse {
+  userEmail?: string | null
+  userDisplayName?: string | null
+}
+
+export interface PlatformAdminOrdersResponse {
+  orders: PlatformAdminOrderResponse[]
+}
+
+export interface PlatformAdminPlansResponse {
+  plans: PlatformPlanResponse[]
+}
+
+export interface PlatformAdminUpsertPlanRequest {
+  id: string
+  name: string
+  credits: number
+  priceCents: number
+  currency: 'USD' | 'CNY'
+  enabled: boolean
+}
+
+export interface PlatformAdminUpsertPlanResponse {
+  plan: PlatformPlanResponse
+}
+
+export interface PlatformAdminDetectModelsRequest {
+  baseUrl: string
+  apiKey?: string
+}
+
+export interface PlatformAdminDetectModelsResponse {
+  models: string[]
+}
+
+export interface PlatformAdminConfigResponse {
+  config: {
+    siteName: string
+    publicBaseUrl: string
+    supportEmail: string
+    openaiBaseUrl: string
+    openaiImageModel: string
+    upstreamTimeoutMs: number
+    hasOpenaiApiKey: boolean
+    openaiApiKeyMasked: string
+    allowUserApiConfig: boolean
+    epayEnabled: boolean
+    epayGatewayUrl: string
+    epayPid: string
+    epayKeyMasked: string
+    epayReturnUrl: string
+    epayNotifyUrl: string
+    creditsPerImage: number
+    imageModel: string
+    imageBaseUrl: string
+    paymentProviders: Record<string, boolean>
+    runtime: {
+      devMode: boolean
+      databaseDriver: string
+      host: string
+      port: number
+    }
+  }
+}
+
+export interface PlatformAdminUpdateConfigRequest {
+  siteName?: string
+  publicBaseUrl?: string
+  supportEmail?: string
+  openaiApiKey?: string
+  openaiBaseUrl?: string
+  openaiImageModel?: string
+  upstreamTimeoutMs?: number
+  allowUserApiConfig?: boolean
+  epayEnabled?: boolean
+  epayGatewayUrl?: string
+  epayPid?: string
+  epayKey?: string
+  epayReturnUrl?: string
+  epayNotifyUrl?: string
+  creditsPerImage?: number
+}
+
+export interface PlatformAdminCreateUserRequest {
+  username: string
+  email?: string | null
+  phone?: string | null
+  adminNote?: string | null
+  password: string
+  displayName?: string
+  role?: 'user' | 'admin'
+  availableCredits?: number
+}
+
+export interface PlatformAdminCreateUserResponse {
+  user: PlatformAdminUserResponse
+}
+
+export interface PlatformAdminUpdateUserRequest {
+  userId: string
+  username?: string
+  email?: string
+  phone?: string
+  adminNote?: string
+  displayName?: string
+  password?: string
+  status?: 'active' | 'disabled'
+}
+
+export interface PlatformAdminUpdateUserResponse {
+  user: {
+    id: string
+    username?: string | null
+    email?: string | null
+    phone?: string | null
+    adminNote?: string | null
+    displayName?: string | null
+    role: string
+    status: string
+  }
+}
+
+export interface PlatformAdminAdjustCreditsRequest {
+  userId: string
+  amount: number
+  description?: string
+}
+
+export interface PlatformAdminSetBalanceRequest {
+  userId: string
+  availableCredits: number
+  description?: string
+}
+
+export interface PlatformAdminAdjustCreditsResponse {
+  balance: {
+    userId: string
+    availableCredits: number
+    updatedAt: string
+  }
+  ledgerEntry: PlatformLedgerEntryResponse
 }

@@ -1,5 +1,6 @@
 import { errorResponse, jsonResponse, readJsonRequest } from '../http.js'
 import { getBillingStore } from '../billing/store.js'
+import { verifyEpayNotify } from '../payments/epay.js'
 
 interface PaymentNotifyBody {
   provider?: unknown
@@ -30,7 +31,7 @@ export async function handlePaymentNotifyRequest(request: Request): Promise<Resp
 
   try {
     const body = await readJsonRequest<PaymentNotifyBody>(request)
-    const provider = body.provider === 'dev' || body.provider === 'stripe' || body.provider === 'wechat' || body.provider === 'alipay'
+    const provider = body.provider === 'dev' || body.provider === 'stripe' || body.provider === 'wechat' || body.provider === 'alipay' || body.provider === 'epay'
       ? body.provider
       : ''
     const providerEventId = typeof body.providerEventId === 'string' ? body.providerEventId.trim() : ''
@@ -60,5 +61,47 @@ export async function handlePaymentNotifyRequest(request: Request): Promise<Resp
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return errorResponse(message, message === 'Unauthorized' ? 401 : 400, message === 'Unauthorized' ? 'unauthorized' : 'bad_request')
+  }
+}
+
+export async function handleEpayNotifyRequest(request: Request): Promise<Response> {
+  try {
+    const url = new URL(request.url)
+    const rawParams: Record<string, string> = {}
+
+    if (request.method === 'POST') {
+      const text = await request.text()
+      for (const [key, value] of new URLSearchParams(text).entries()) rawParams[key] = value
+    } else {
+      for (const [key, value] of url.searchParams.entries()) rawParams[key] = value
+    }
+
+    const verified = await verifyEpayNotify(rawParams, url.origin)
+    if (!verified) return errorResponse('Invalid epay signature', 401, 'invalid_signature')
+    if (rawParams.trade_status && rawParams.trade_status !== 'TRADE_SUCCESS') {
+      return errorResponse('Epay trade is not successful', 400, 'bad_request')
+    }
+
+    const orderId = rawParams.out_trade_no || ''
+    const providerEventId = rawParams.trade_no || rawParams.api_trade_no || `epay:${orderId}`
+    const paidAmountCents = Math.round(Number(rawParams.money || 0) * 100)
+    if (!orderId || !Number.isFinite(paidAmountCents)) return errorResponse('Missing epay notify fields', 400, 'bad_request')
+
+    const result = await getBillingStore().markOrderPaid({
+      orderId,
+      provider: 'epay',
+      providerEventId,
+      providerPaymentId: providerEventId,
+      paidAmountCents,
+      raw: rawParams,
+    })
+
+    return new Response(request.method === 'GET' ? JSON.stringify({ ok: true, duplicate: result.duplicate }) : 'success', {
+      status: 200,
+      headers: { 'Content-Type': request.method === 'GET' ? 'application/json' : 'text/plain' },
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return errorResponse(message, 400, 'bad_request')
   }
 }

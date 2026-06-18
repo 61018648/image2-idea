@@ -24,3 +24,10 @@ export function quoteImageCredits(input: QuoteInput): number {
   const count = Math.max(1, Math.min(16, Math.trunc(Number(input.n) || 1)))
   return count * getSizeMultiplier(input.size) * getQualityMultiplier(input.quality)
 }
+
+export async function quoteImageCreditsFromConfig(input: QuoteInput): Promise<number> {
+  const config = await readPlatformConfig()
+  const base = Math.max(1, Math.trunc(config.creditsPerImage || 1))
+  return quoteImageCredits(input) * base
+}
+import { readPlatformConfig } from '../admin/configStore.js'

@@ -1,6 +1,7 @@
 import { readRequiredSession } from '../auth/session.js'
-import { quoteImageCredits } from '../billing/quote.js'
+import { quoteImageCreditsFromConfig } from '../billing/quote.js'
 import { getBillingStore } from '../billing/store.js'
+import { getGenerationJobStore } from '../generationJobs/store.js'
 import { errorResponse, isSameOrigin, jsonResponse, readJsonRequest } from '../http.js'
 import { generateWithOpenAICompatible } from '../providers/openaiImageProvider.js'
 
@@ -62,40 +63,55 @@ export async function handlePlatformImageGeneration(request: Request): Promise<R
     const message = error instanceof Error ? error.message : String(error)
     return errorResponse(message, 400, 'bad_request')
   }
-  const creditsQuoted = quoteImageCredits(normalized.params)
+  const creditsQuoted = await quoteImageCreditsFromConfig(normalized.params)
   const platformJobId = genJobId(session.userId)
+  const jobStore = getGenerationJobStore()
 
   try {
-    await store.debitCredits({
+    const debit = await store.debitGeneration({
       userId: session.userId,
-      amount: -creditsQuoted,
+      creditAmount: creditsQuoted,
+      packageUses: normalized.params.n,
       sourceId: platformJobId,
       description: `Image generation: ${normalized.params.n} image(s)`,
     })
+    try {
+      await jobStore.createJob({
+        id: platformJobId,
+        userId: session.userId,
+        request: normalized,
+        costCredits: creditsQuoted,
+      })
+      await jobStore.markRunning(platformJobId)
+      const result = await generateWithOpenAICompatible(normalized)
+      await jobStore.markSucceeded(platformJobId, {
+        images: result.images,
+        rawImageUrls: result.rawImageUrls,
+        revisedPrompts: result.revisedPrompts,
+        actualParams: result.actualParams,
+      })
+      return jsonResponse({
+        ...result,
+        platformJobId,
+        creditsQuoted,
+        creditsCharged: debit.chargedCredits,
+      })
+    } catch (error) {
+      await jobStore.markFailed(platformJobId, error instanceof Error ? error.message : String(error)).catch(() => undefined)
+      await store.refundGeneration({
+        userId: session.userId,
+        debit,
+        sourceId: platformJobId,
+        description: 'Image generation failed refund',
+      }).catch(() => undefined)
+
+      const message = error instanceof Error ? error.message : String(error)
+      const status = message.startsWith('Missing required environment variable') ? 500 : 400
+      return errorResponse(message, status, status === 500 ? 'server_not_configured' : 'generation_failed')
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     if (message === 'Insufficient credits') return errorResponse('Insufficient credits', 402, 'insufficient_credits')
     return errorResponse(message, 400, 'billing_failed')
-  }
-
-  try {
-    const result = await generateWithOpenAICompatible(normalized)
-    return jsonResponse({
-      ...result,
-      platformJobId,
-      creditsQuoted,
-      creditsCharged: creditsQuoted,
-    })
-  } catch (error) {
-    await store.refundCredits({
-      userId: session.userId,
-      amount: creditsQuoted,
-      sourceId: platformJobId,
-      description: 'Image generation failed refund',
-    }).catch(() => undefined)
-
-    const message = error instanceof Error ? error.message : String(error)
-    const status = message.startsWith('Missing required environment variable') ? 500 : 400
-    return errorResponse(message, status, status === 500 ? 'server_not_configured' : 'generation_failed')
   }
 }

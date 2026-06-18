@@ -6,10 +6,10 @@ import { mergeImportedSettings } from './lib/apiProfiles'
 import { getCustomProviderConfigUrl, loadCustomProviderSettingsFromUrl } from './lib/customProviderConfigUrl'
 import { useDockerApiUrlMigrationNotice } from './hooks/useDockerApiUrlMigrationNotice'
 import Header from './components/Header'
-import PlatformStatusBanner from './components/PlatformStatusBanner'
-import PlatformCommercialConsole from './components/PlatformCommercialConsole'
-import SearchBar from './components/SearchBar'
-import TaskGrid from './components/TaskGrid'
+import PlatformAuthPage from './components/PlatformAuthPage'
+import UserCenterPage from './components/UserCenterPage'
+import AdminPage from './components/AdminPage'
+import GalleryPage from './components/GalleryPage'
 import AgentWorkspace from './components/AgentWorkspace'
 import InputBar from './components/InputBar'
 import DetailModal from './components/DetailModal'
@@ -20,7 +20,7 @@ import Toast from './components/Toast'
 import MaskEditorModal from './components/MaskEditorModal'
 import ImageContextMenu from './components/ImageContextMenu'
 import SupportPromptModal from './components/SupportPromptModal'
-import { FavoriteCollectionPickerModal, FavoriteCollectionsView, ManageCollectionsModal } from './components/FavoriteCollections'
+import { FavoriteCollectionPickerModal, ManageCollectionsModal } from './components/FavoriteCollections'
 import { useGlobalClickSuppression } from './lib/clickSuppression'
 
 let customProviderConfigUrlImportStarted = false
@@ -65,6 +65,25 @@ export default function App() {
   }, [setSettings])
 
   useEffect(() => {
+    const syncModeFromRoute = () => {
+      const pathname = window.location.pathname
+      if (pathname === '/admin') {
+        useStore.getState().setAppMode('admin')
+      } else if (pathname === '/user') {
+        useStore.getState().setAppMode('user-center')
+      } else if (pathname === '/auth' || pathname === '/login' || pathname === '/register') {
+        useStore.getState().setAppMode('auth')
+      } else if (pathname === '/gallery' || pathname === '/') {
+        useStore.getState().setAppMode('gallery')
+      }
+    }
+
+    syncModeFromRoute()
+    window.addEventListener('popstate', syncModeFromRoute)
+    return () => window.removeEventListener('popstate', syncModeFromRoute)
+  }, [])
+
+  useEffect(() => {
     const preventPageImageDrag = (e: DragEvent) => {
       if ((e.target as HTMLElement | null)?.closest('img')) {
         e.preventDefault()
@@ -80,17 +99,16 @@ export default function App() {
       <Header />
       {appMode === 'agent' ? (
         <AgentWorkspace />
+      ) : appMode === 'auth' ? (
+        <PlatformAuthPage />
+      ) : appMode === 'admin' ? (
+        <AdminPage />
+      ) : appMode === 'user-center' ? (
+        <UserCenterPage />
       ) : (
-        <main data-home-main data-drag-select-surface className="pb-48">
-          <PlatformStatusBanner />
-          <PlatformCommercialConsole />
-          <div className="safe-area-x max-w-7xl mx-auto">
-            <SearchBar />
-            {filterFavorite && !activeFavoriteCollectionId ? <FavoriteCollectionsView /> : <TaskGrid />}
-          </div>
-        </main>
+        <GalleryPage filterFavorite={filterFavorite} activeFavoriteCollectionId={activeFavoriteCollectionId} />
       )}
-      <InputBar />
+      {appMode !== 'auth' && appMode !== 'user-center' && appMode !== 'admin' && <InputBar />}
       <DetailModal />
       <Lightbox />
       <SettingsModal />

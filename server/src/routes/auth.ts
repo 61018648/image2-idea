@@ -1,31 +1,35 @@
-import { randomUUID } from 'node:crypto'
 import { createSessionCookie, clearSessionCookie, readCookieSession } from '../auth/cookieSession.js'
 import { hashPassword, verifyPassword } from '../auth/password.js'
+import { createMysqlUser, findMysqlUserByUsername, findMysqlUserById, updateMysqlUserLastLogin } from '../auth/mysqlAccounts.js'
 import { getBillingStore } from '../billing/store.js'
+import { useMysqlCompat } from '../db/mysqlCompat.js'
 import { getPrismaClient } from '../db/prisma.js'
 import { errorResponse, jsonResponse, readJsonRequest } from '../http.js'
 
 interface AuthBody {
+  username?: unknown
   email?: unknown
   password?: unknown
 }
 
-function normalizeEmail(value: unknown): string {
-  return typeof value === 'string' ? value.trim().toLowerCase() : ''
+function normalizeUsername(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
 }
 
 function normalizePassword(value: unknown): string {
   return typeof value === 'string' ? value : ''
 }
 
-function validateAuthInput(email: string, password: string): string | null {
-  if (!email || !/^\S+@\S+\.\S+$/.test(email)) return 'Valid email is required'
+function validateAuthInput(username: string, password: string): string | null {
+  if (!username || username.length < 3) return 'Username must be at least 3 characters'
+  if (username.length > 64) return 'Username is too long'
   if (password.length < 8) return 'Password must be at least 8 characters'
   if (password.length > 128) return 'Password is too long'
   return null
 }
 
 function requireDatabase(): Response | null {
+  if (useMysqlCompat()) return null
   if (process.env.DATABASE_URL?.trim()) return null
   return errorResponse('Database is required for platform auth. Use PLATFORM_DEV_MODE=true for no-database development.', 500, 'database_required')
 }
@@ -40,16 +44,21 @@ export async function handleAuthRequest(request: Request): Promise<Response> {
   const dbError = requireDatabase()
   if (dbError) return dbError
 
-  const prisma = getPrismaClient()
   const url = new URL(request.url)
   const pathname = url.pathname
 
   if (pathname === '/api/platform/auth/session' && request.method === 'GET') {
     const session = readCookieSession(request.headers)
     if (!session) return errorResponse('Unauthorized', 401, 'unauthorized')
+    if (useMysqlCompat()) {
+      const account = await findMysqlUserById(session.userId)
+      if (!account || account.status !== 'active') return errorResponse('Unauthorized', 401, 'unauthorized')
+      return jsonResponse({ user: { id: account.id, username: account.username, email: account.email, role: account.role === 'admin' ? 'admin' : 'user', mode: 'authenticated' } })
+    }
+    const prisma = getPrismaClient()
     const account = await prisma.userAccount.findUnique({ where: { id: session.userId } })
     if (!account || account.status !== 'active') return errorResponse('Unauthorized', 401, 'unauthorized')
-    return jsonResponse({ user: { id: account.id, email: account.email, mode: 'authenticated' } })
+    return jsonResponse({ user: { id: account.id, username: account.displayName, email: account.email, role: account.role === 'admin' ? 'admin' : 'user', mode: 'authenticated' } })
   }
 
   if (pathname === '/api/platform/auth/logout' && request.method === 'POST') {
@@ -58,21 +67,36 @@ export async function handleAuthRequest(request: Request): Promise<Response> {
 
   if ((pathname === '/api/platform/auth/register' || pathname === '/api/platform/auth/login') && request.method === 'POST') {
     const body = await readJsonRequest<AuthBody>(request)
-    const email = normalizeEmail(body.email)
+    const username = normalizeUsername(body.username ?? body.email)
     const password = normalizePassword(body.password)
-    const validationError = validateAuthInput(email, password)
+    const validationError = validateAuthInput(username, password)
     if (validationError) return errorResponse(validationError, 400, 'bad_request')
 
     if (pathname === '/api/platform/auth/register') {
-      const existing = await prisma.userAccount.findUnique({ where: { email } })
-      if (existing) return errorResponse('Email is already registered', 409, 'email_exists')
+      if (useMysqlCompat()) {
+        const existing = await findMysqlUserByUsername(username)
+        if (existing) return errorResponse('Username is already registered', 409, 'username_exists')
+        const passwordHash = await hashPassword(password)
+        const account = await createMysqlUser({
+          username,
+          email: null,
+          passwordHash,
+          displayName: username,
+        })
+        await getBillingStore().getOrCreateAccount(account.id).catch(() => undefined)
+        return authResponse({ user: { id: account.id, username: account.username, email: account.email, role: account.role === 'admin' ? 'admin' : 'user', mode: 'authenticated' } }, createSessionCookie({ userId: account.id }))
+      }
+
+      const prisma = getPrismaClient()
+      const existing = await prisma.userAccount.findFirst({ where: { displayName: username } })
+      if (existing) return errorResponse('Username is already registered', 409, 'username_exists')
       const passwordHash = await hashPassword(password)
       const account = await prisma.userAccount.create({
         data: {
-          id: `usr_${randomUUID().replace(/-/g, '')}`,
-          email,
+          id: String(Date.now()),
+          email: null,
           passwordHash,
-          displayName: email.split('@')[0],
+          displayName: username,
           role: 'user',
           status: 'active',
           lastLoginAt: new Date(),
@@ -80,15 +104,25 @@ export async function handleAuthRequest(request: Request): Promise<Response> {
         },
       })
       await getBillingStore().getOrCreateAccount(account.id).catch(() => undefined)
-      return authResponse({ user: { id: account.id, email: account.email, mode: 'authenticated' } }, createSessionCookie({ userId: account.id, email }))
+      return authResponse({ user: { id: account.id, username: account.displayName, email: account.email, role: account.role === 'admin' ? 'admin' : 'user', mode: 'authenticated' } }, createSessionCookie({ userId: account.id }))
     }
 
-    const account = await prisma.userAccount.findUnique({ where: { email } })
-    if (!account || !account.passwordHash || account.status !== 'active') return errorResponse('Invalid email or password', 401, 'invalid_credentials')
+    if (useMysqlCompat()) {
+      const account = await findMysqlUserByUsername(username)
+      if (!account || !account.passwordHash || account.status !== 'active') return errorResponse('Invalid username or password', 401, 'invalid_credentials')
+      const passwordOk = await verifyPassword(password, account.passwordHash)
+      if (!passwordOk) return errorResponse('Invalid username or password', 401, 'invalid_credentials')
+      await updateMysqlUserLastLogin(account.id)
+      return authResponse({ user: { id: account.id, username: account.username, email: account.email, role: account.role === 'admin' ? 'admin' : 'user', mode: 'authenticated' } }, createSessionCookie({ userId: account.id }))
+    }
+
+    const prisma = getPrismaClient()
+    const account = await prisma.userAccount.findFirst({ where: { displayName: username } })
+    if (!account || !account.passwordHash || account.status !== 'active') return errorResponse('Invalid username or password', 401, 'invalid_credentials')
     const passwordOk = await verifyPassword(password, account.passwordHash)
-    if (!passwordOk) return errorResponse('Invalid email or password', 401, 'invalid_credentials')
+    if (!passwordOk) return errorResponse('Invalid username or password', 401, 'invalid_credentials')
     await prisma.userAccount.update({ where: { id: account.id }, data: { lastLoginAt: new Date() } })
-    return authResponse({ user: { id: account.id, email: account.email, mode: 'authenticated' } }, createSessionCookie({ userId: account.id, email }))
+    return authResponse({ user: { id: account.id, username: account.displayName, email: account.email, role: account.role === 'admin' ? 'admin' : 'user', mode: 'authenticated' } }, createSessionCookie({ userId: account.id }))
   }
 
   return errorResponse('Not found', 404, 'not_found')

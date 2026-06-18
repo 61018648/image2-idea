@@ -6,7 +6,7 @@ import { handleAuthRequest } from './routes/auth.js'
 import { handleOrdersRequest } from './routes/orders.js'
 import { handleAdminRequest } from './routes/admin.js'
 import { handleGenerationsRequest } from './routes/generations.js'
-import { handlePaymentNotifyRequest } from './routes/paymentNotify.js'
+import { handleEpayNotifyRequest, handlePaymentNotifyRequest } from './routes/paymentNotify.js'
 import { handlePlatformImageGeneration } from './routes/platformImages.js'
 
 const HOST = process.env.PLATFORM_HOST || '127.0.0.1'
@@ -80,7 +80,7 @@ async function route(request: Request): Promise<Response> {
     return handleAuthRequest(request)
   }
 
-  if (url.pathname === '/api/platform/me' || url.pathname === '/api/platform/balance' || url.pathname === '/api/platform/ledger') {
+  if (url.pathname === '/api/platform/me' || url.pathname === '/api/platform/balance' || url.pathname === '/api/platform/ledger' || url.pathname === '/api/platform/packages') {
     return handleAccountRequest(request)
   }
 
@@ -92,7 +92,11 @@ async function route(request: Request): Promise<Response> {
     return handlePaymentNotifyRequest(request)
   }
 
-  if (url.pathname === '/api/platform/admin/stats') {
+  if (url.pathname === '/api/platform/payments/epay/notify') {
+    return handleEpayNotifyRequest(request)
+  }
+
+  if (url.pathname.startsWith('/api/platform/admin/')) {
     return handleAdminRequest(request)
   }
 

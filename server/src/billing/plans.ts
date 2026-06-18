@@ -6,7 +6,7 @@ export const DEFAULT_PLANS: Plan[] = [
     name: 'Small',
     credits: 100,
     priceCents: 500,
-    currency: 'USD',
+    currency: 'CNY',
     enabled: true,
   },
   {
@@ -14,7 +14,7 @@ export const DEFAULT_PLANS: Plan[] = [
     name: 'Medium',
     credits: 500,
     priceCents: 2000,
-    currency: 'USD',
+    currency: 'CNY',
     enabled: true,
   },
   {
@@ -22,7 +22,7 @@ export const DEFAULT_PLANS: Plan[] = [
     name: 'Free Trial',
     credits: 20,
     priceCents: 0,
-    currency: 'USD',
+    currency: 'CNY',
     enabled: true,
   },
 ]

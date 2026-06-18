@@ -12,6 +12,7 @@ model UserAccount {
   email        String?   @unique @db.VarChar(191)
   passwordHash String?   @map("password_hash") @db.VarChar(255)
   displayName  String?   @map("display_name") @db.VarChar(191)
+  avatarUrl    String?   @map("avatar_url") @db.LongText
   role         String    @default("user") @db.VarChar(32)
   status       String    @default("active") @db.VarChar(32)
   lastLoginAt  DateTime? @map("last_login_at")
@@ -22,6 +23,7 @@ model UserAccount {
   ledger  CreditLedger[]
   orders  Order[]
   jobs    GenerationJob[]
+  packages UserPlanPackage[]
 
   @@map("user_accounts")
 }
@@ -47,6 +49,7 @@ model Plan {
   updatedAt   DateTime @updatedAt @map("updated_at")
 
   orders Order[]
+  packages UserPlanPackage[]
 
   @@map("plans")
 }
@@ -70,6 +73,25 @@ model Order {
 
   @@index([userId, createdAt])
   @@map("orders")
+}
+
+model UserPlanPackage {
+  id            String    @id @db.VarChar(128)
+  userId        String    @map("user_id") @db.VarChar(128)
+  planId        String    @map("plan_id") @db.VarChar(128)
+  orderId       String    @unique @map("order_id") @db.VarChar(128)
+  totalUses     Int       @map("total_uses")
+  remainingUses Int       @map("remaining_uses")
+  status        String    @default("active") @db.VarChar(32)
+  expiresAt     DateTime? @map("expires_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  user UserAccount @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan Plan        @relation(fields: [planId], references: [id])
+
+  @@index([userId, status, createdAt])
+  @@map("user_plan_packages")
 }
 
 model CreditLedger {

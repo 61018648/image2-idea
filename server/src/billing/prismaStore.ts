@@ -1,6 +1,6 @@
 import type { Prisma, PrismaClient } from '@prisma/client'
 import { DEFAULT_PLANS } from './plans.js'
-import type { Balance, BillingStore, LedgerEntry, Order, PaymentProvider, Plan, UserAccount } from './types.js'
+import type { Balance, BillingStore, GenerationDebit, LedgerEntry, Order, PaymentProvider, Plan, UserAccount, UserPlanPackage } from './types.js'
 
 type Tx = Prisma.TransactionClient
 
@@ -12,6 +12,11 @@ function genId(prefix: string) {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`
 }
 
+function genOrderId() {
+  const stamp = new Date().toISOString().replace(/\D/g, '').slice(0, 14)
+  return `order_${stamp}${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`
+}
+
 function toIso(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : value
 }
@@ -21,7 +26,7 @@ function toCurrency(value: string): Plan['currency'] {
 }
 
 function toProvider(value: string): PaymentProvider {
-  if (value === 'stripe' || value === 'wechat' || value === 'alipay' || value === 'dev') return value
+  if (value === 'stripe' || value === 'wechat' || value === 'alipay' || value === 'epay' || value === 'dev') return value
   return 'dev'
 }
 
@@ -66,6 +71,23 @@ function mapOrder(order: { id: string; userId: string; planId: string; status: s
     ...(order.providerPaymentId ? { providerPaymentId: order.providerPaymentId } : {}),
     createdAt: toIso(order.createdAt),
     ...(order.paidAt ? { paidAt: toIso(order.paidAt) } : {}),
+  }
+}
+
+function mapPackage(pkg: { id: string; userId: string; planId: string; orderId: string; totalUses: number; remainingUses: number; status: string; createdAt: Date; updatedAt: Date; expiresAt: Date | null }): UserPlanPackage {
+  const remainingUses = pkg.remainingUses
+  const status = remainingUses <= 0 ? 'depleted' : pkg.status === 'expired' ? 'expired' : pkg.status === 'depleted' ? 'depleted' : 'active'
+  return {
+    id: pkg.id,
+    userId: pkg.userId,
+    planId: pkg.planId,
+    orderId: pkg.orderId,
+    totalUses: pkg.totalUses,
+    remainingUses,
+    status,
+    createdAt: toIso(pkg.createdAt),
+    updatedAt: toIso(pkg.updatedAt),
+    ...(pkg.expiresAt ? { expiresAt: toIso(pkg.expiresAt) } : {}),
   }
 }
 
@@ -185,6 +207,38 @@ export async function createPrismaBillingStore(prisma: PrismaClient): Promise<Bi
       const plans = await prisma.plan.findMany({ orderBy: { createdAt: 'asc' } })
       return plans.map(mapPlan)
     },
+    async upsertPlan(plan) {
+      const normalized: Plan = {
+        id: plan.id.trim(),
+        name: plan.name.trim(),
+        credits: Math.max(1, Math.trunc(plan.credits)),
+        priceCents: Math.max(0, Math.trunc(plan.priceCents)),
+        currency: plan.currency === 'USD' ? 'USD' : 'CNY',
+        enabled: Boolean(plan.enabled),
+      }
+      if (!normalized.id) throw new Error('Plan ID is required')
+      if (!normalized.name) throw new Error('Plan name is required')
+      const saved = await prisma.plan.upsert({
+        where: { id: normalized.id },
+        update: {
+          name: normalized.name,
+          credits: normalized.credits,
+          priceCents: normalized.priceCents,
+          currency: normalized.currency,
+          enabled: normalized.enabled,
+        },
+        create: normalized,
+      })
+      return mapPlan(saved)
+    },
+
+    async listUserPlanPackages(userId) {
+      const packages = await prisma.userPlanPackage.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'asc' },
+      })
+      return packages.map(mapPackage)
+    },
 
     async listOrders(userId, limit = 20) {
       const take = Math.max(1, Math.min(100, Math.trunc(limit || 20)))
@@ -226,7 +280,7 @@ export async function createPrismaBillingStore(prisma: PrismaClient): Promise<Bi
         if (!plan) throw new Error('Plan not found')
         const order = await tx.order.create({
           data: {
-            id: genId('ord'),
+            id: genOrderId(),
             userId,
             planId,
             status: 'pending',
@@ -280,16 +334,21 @@ export async function createPrismaBillingStore(prisma: PrismaClient): Promise<Bi
             raw: input.raw as Prisma.InputJsonValue,
           },
         })
-        const ledgerEntry = await addLedgerEntry(tx, {
-          userId: order.userId,
-          type: 'purchase',
-          amount: plan.credits,
-          source: 'payment_notify',
-          sourceId: order.id,
-          description: `Purchase ${plan.id}`,
+        await tx.userPlanPackage.upsert({
+          where: { orderId: order.id },
+          update: {},
+          create: {
+            id: genId('pkg'),
+            userId: order.userId,
+            planId: order.planId,
+            orderId: order.id,
+            totalUses: plan.credits,
+            remainingUses: plan.credits,
+            status: 'active',
+          },
         })
 
-        return { order: mapOrder(updatedOrder), ledgerEntry: mapLedger(ledgerEntry), duplicate: false as const }
+        return { order: mapOrder(updatedOrder), duplicate: false as const }
       })
     },
 
@@ -333,6 +392,89 @@ export async function createPrismaBillingStore(prisma: PrismaClient): Promise<Bi
         })
         const updatedBalance = await tx.balance.findUniqueOrThrow({ where: { userId: input.userId } })
         return { balance: mapBalance(updatedBalance), ledgerEntry: mapLedger(ledgerEntry), duplicate: false as const }
+      })
+    },
+    async debitGeneration(input) {
+      return prisma.$transaction(async (tx) => {
+        await ensureAccount(tx, input.userId)
+        const existing = await tx.creditLedger.findUnique({ where: { sourceId: input.sourceId } })
+        const balance = await tx.balance.findUniqueOrThrow({ where: { userId: input.userId } })
+        if (existing) return { mode: 'credits', chargedCredits: Math.abs(existing.amount), chargedPackageUses: 0, balance: mapBalance(balance), ledgerEntry: mapLedger(existing) } satisfies GenerationDebit
+
+        const uses = Math.max(1, Math.trunc(input.packageUses || 1))
+        const pkg = await tx.userPlanPackage.findFirst({
+          where: { userId: input.userId, status: 'active', remainingUses: { gte: uses } },
+          orderBy: { createdAt: 'asc' },
+        })
+        if (pkg) {
+          const nextRemaining = pkg.remainingUses - uses
+          const updated = await tx.userPlanPackage.update({
+            where: { id: pkg.id },
+            data: {
+              remainingUses: nextRemaining,
+              status: nextRemaining <= 0 ? 'depleted' : 'active',
+            },
+          })
+          return { mode: 'package', chargedCredits: 0, chargedPackageUses: uses, package: mapPackage(updated) } satisfies GenerationDebit
+        }
+
+        const amount = Math.max(1, Math.trunc(input.creditAmount || 1))
+        if (balance.availableCredits - amount < 0) throw new Error('Insufficient credits')
+        const ledgerEntry = await addLedgerEntry(tx, {
+          userId: input.userId,
+          type: 'debit',
+          amount: -amount,
+          source: 'image_generation',
+          sourceId: input.sourceId,
+          description: input.description,
+        })
+        const updatedBalance = await tx.balance.findUniqueOrThrow({ where: { userId: input.userId } })
+        return { mode: 'credits', chargedCredits: amount, chargedPackageUses: 0, balance: mapBalance(updatedBalance), ledgerEntry: mapLedger(ledgerEntry) } satisfies GenerationDebit
+      })
+    },
+    async refundGeneration(input) {
+      await prisma.$transaction(async (tx) => {
+        if (input.debit.mode === 'package' && input.debit.package) {
+          const pkg = await tx.userPlanPackage.findUnique({ where: { id: input.debit.package.id } })
+          if (!pkg) return
+          const nextRemaining = Math.min(pkg.totalUses, pkg.remainingUses + Math.max(1, input.debit.chargedPackageUses))
+          await tx.userPlanPackage.update({
+            where: { id: pkg.id },
+            data: { remainingUses: nextRemaining, status: nextRemaining > 0 ? 'active' : 'depleted' },
+          })
+          return
+        }
+        if (input.debit.mode === 'credits' && input.debit.chargedCredits > 0) {
+          const existing = await tx.creditLedger.findUnique({ where: { sourceId: `refund:${input.sourceId}` } })
+          if (existing) return
+          await addLedgerEntry(tx, {
+            userId: input.userId,
+            type: 'refund',
+            amount: input.debit.chargedCredits,
+            source: 'image_generation',
+            sourceId: `refund:${input.sourceId}`,
+            description: input.description,
+          })
+        }
+      })
+    },
+    async adjustCredits(input) {
+      return prisma.$transaction(async (tx) => {
+        await ensureAccount(tx, input.userId)
+        const amount = Math.trunc(input.amount)
+        if (!amount) throw new Error('Adjustment amount is required')
+        const balance = await tx.balance.findUniqueOrThrow({ where: { userId: input.userId } })
+        if (balance.availableCredits + amount < 0) throw new Error('Insufficient credits')
+        const ledgerEntry = await addLedgerEntry(tx, {
+          userId: input.userId,
+          type: amount > 0 ? 'grant' : 'adjustment',
+          amount,
+          source: 'admin',
+          sourceId: genId('admin'),
+          description: input.description || 'Admin credit adjustment',
+        })
+        const updatedBalance = await tx.balance.findUniqueOrThrow({ where: { userId: input.userId } })
+        return { balance: mapBalance(updatedBalance), ledgerEntry: mapLedger(ledgerEntry) }
       })
     },
   }
