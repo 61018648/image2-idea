@@ -165,7 +165,7 @@ export default function PlatformAuthModal({ baseUrl, onClose, onAuthenticated }:
             </label>
           )}
           <label className="block space-y-2">
-            <span className="text-sm font-medium text-gray-700 dark:text-gray-200">邮箱</span>
+            <span className="text-sm font-medium text-gray-700 dark:text-gray-200">用户名</span>
             <input
               type="text"
               autoComplete="username"

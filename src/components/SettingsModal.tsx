@@ -2088,7 +2088,7 @@ export default function SettingsModal() {
                 </a>
                 
                 <p className="mt-8 mb-6 max-w-[360px] text-center text-[13px] leading-relaxed text-gray-500 dark:text-gray-400">
-                  本项目的成长离不开每一位用户的使用、反馈、贡献与支持，感谢一路有你。
+                  本项目基于开源项目<a href="https://github.com/CookSleep/gpt_image_playground">GPT Image Playground</a>进行二次开发，如在使用过程中遇到问题请及时反馈，网站离不开每一位用户的使用、反馈、贡献与支持，感谢一路有你。
                 </p>
 
                 <div className="flex flex-wrap items-center justify-center gap-3">
