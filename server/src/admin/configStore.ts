@@ -6,6 +6,16 @@ export interface PlatformRuntimeConfig {
   siteName: string
   publicBaseUrl: string
   supportEmail: string
+  smtpEnabled: boolean
+  smtpHost: string
+  smtpPort: number
+  smtpSecure: boolean
+  smtpUser: string
+  smtpPasswordMasked: string
+  smtpFromName: string
+  smtpFromEmail: string
+  emailVerificationOnRegister: boolean
+  emailVerificationOnProfileUpdate: boolean
   openaiBaseUrl: string
   openaiImageModel: string
   upstreamTimeoutMs: number
@@ -36,6 +46,16 @@ export interface PlatformConfigPatch {
   siteName?: string
   publicBaseUrl?: string
   supportEmail?: string
+  smtpEnabled?: boolean
+  smtpHost?: string
+  smtpPort?: number
+  smtpSecure?: boolean
+  smtpUser?: string
+  smtpPassword?: string
+  smtpFromName?: string
+  smtpFromEmail?: string
+  emailVerificationOnRegister?: boolean
+  emailVerificationOnProfileUpdate?: boolean
   openaiApiKey?: string
   openaiBaseUrl?: string
   openaiImageModel?: string
@@ -175,6 +195,16 @@ const ALL_KEYS = [
   'siteName',
   'publicBaseUrl',
   'supportEmail',
+  'smtpEnabled',
+  'smtpHost',
+  'smtpPort',
+  'smtpSecure',
+  'smtpUser',
+  'smtpPassword',
+  'smtpFromName',
+  'smtpFromEmail',
+  'emailVerificationOnRegister',
+  'emailVerificationOnProfileUpdate',
   'openaiApiKey',
   'openaiBaseUrl',
   'openaiImageModel',
@@ -200,6 +230,16 @@ export async function readPlatformConfig(): Promise<PlatformRuntimeConfig> {
     siteName: settings.siteName || env('PLATFORM_SITE_NAME') || 'Image Idea',
     publicBaseUrl: settings.publicBaseUrl || env('PLATFORM_PUBLIC_BASE_URL') || '',
     supportEmail: settings.supportEmail || env('PLATFORM_SUPPORT_EMAIL') || '',
+    smtpEnabled: normalizeBoolean(settings.smtpEnabled || env('SMTP_ENABLED'), false),
+    smtpHost: settings.smtpHost || env('SMTP_HOST') || '',
+    smtpPort: Math.max(1, Math.min(65535, Math.trunc(Number(settings.smtpPort || env('SMTP_PORT') || 465) || 465))),
+    smtpSecure: normalizeBoolean(settings.smtpSecure || env('SMTP_SECURE'), true),
+    smtpUser: settings.smtpUser || env('SMTP_USER') || '',
+    smtpPasswordMasked: maskSecret(settings.smtpPassword || env('SMTP_PASSWORD')),
+    smtpFromName: settings.smtpFromName || env('SMTP_FROM_NAME') || settings.siteName || env('PLATFORM_SITE_NAME') || 'Image Idea',
+    smtpFromEmail: settings.smtpFromEmail || env('SMTP_FROM_EMAIL') || settings.supportEmail || env('PLATFORM_SUPPORT_EMAIL') || '',
+    emailVerificationOnRegister: normalizeBoolean(settings.emailVerificationOnRegister || env('EMAIL_VERIFICATION_ON_REGISTER'), false),
+    emailVerificationOnProfileUpdate: normalizeBoolean(settings.emailVerificationOnProfileUpdate || env('EMAIL_VERIFICATION_ON_PROFILE_UPDATE'), false),
     openaiBaseUrl: settings.openaiBaseUrl || env('PLATFORM_OPENAI_BASE_URL') || 'https://api.openai.com/v1',
     openaiImageModel: settings.openaiImageModel || env('PLATFORM_OPENAI_IMAGE_MODEL') || 'gpt-image-2',
     upstreamTimeoutMs: timeout,
@@ -243,6 +283,10 @@ export async function updatePlatformConfig(patch: PlatformConfigPatch): Promise<
   copyString('siteName')
   copyString('publicBaseUrl')
   copyString('supportEmail')
+  copyString('smtpHost')
+  copyString('smtpUser')
+  copyString('smtpFromName')
+  copyString('smtpFromEmail')
   copyString('openaiBaseUrl')
   copyString('openaiImageModel')
   copyString('epayGatewayUrl')
@@ -258,6 +302,24 @@ export async function updatePlatformConfig(patch: PlatformConfigPatch): Promise<
   }
   if (typeof patch.allowUserApiConfig === 'boolean') {
     next.allowUserApiConfig = patch.allowUserApiConfig ? 'true' : 'false'
+  }
+  if (typeof patch.smtpEnabled === 'boolean') {
+    next.smtpEnabled = patch.smtpEnabled ? 'true' : 'false'
+  }
+  if (typeof patch.smtpSecure === 'boolean') {
+    next.smtpSecure = patch.smtpSecure ? 'true' : 'false'
+  }
+  if (typeof patch.emailVerificationOnRegister === 'boolean') {
+    next.emailVerificationOnRegister = patch.emailVerificationOnRegister ? 'true' : 'false'
+  }
+  if (typeof patch.emailVerificationOnProfileUpdate === 'boolean') {
+    next.emailVerificationOnProfileUpdate = patch.emailVerificationOnProfileUpdate ? 'true' : 'false'
+  }
+  if (typeof patch.smtpPort !== 'undefined') {
+    next.smtpPort = String(Math.max(1, Math.min(65535, Math.trunc(Number(patch.smtpPort) || 465))))
+  }
+  if (typeof patch.smtpPassword === 'string' && patch.smtpPassword.trim()) {
+    next.smtpPassword = patch.smtpPassword.trim()
   }
   if (typeof patch.epayEnabled === 'boolean') {
     next.epayEnabled = patch.epayEnabled ? 'true' : 'false'

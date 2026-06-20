@@ -65,6 +65,13 @@ export function updatePlatformMe(baseUrl = '', request: PlatformUpdateProfileReq
   })
 }
 
+export function sendPlatformProfileEmailCode(baseUrl = '', email: string): Promise<{ ok: boolean }> {
+  return requestJson<{ ok: boolean }>(baseUrl, '/me/email-code', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  })
+}
+
 export function getPlatformBalance(baseUrl = ''): Promise<PlatformBalanceResponse> {
   return requestJson<PlatformBalanceResponse>(baseUrl, '/balance')
 }

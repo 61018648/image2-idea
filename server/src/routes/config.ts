@@ -7,6 +7,8 @@ export async function handlePublicConfigRequest(): Promise<Response> {
     config: {
       siteName: config.siteName,
       supportEmail: config.supportEmail,
+      emailVerificationOnRegister: config.emailVerificationOnRegister,
+      emailVerificationOnProfileUpdate: config.emailVerificationOnProfileUpdate,
       epayEnabled: config.epayEnabled,
       epayPaymentTypes: config.epayPaymentTypes,
       balanceUnitCents: config.balanceUnitCents,

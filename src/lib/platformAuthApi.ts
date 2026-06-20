@@ -32,6 +32,13 @@ export function registerPlatformUser(baseUrl: string, request: PlatformAuthReque
   })
 }
 
+export function sendPlatformAuthEmailCode(baseUrl: string, request: { email: string; purpose?: 'register' | 'profile_email' }): Promise<{ ok: boolean }> {
+  return requestJson<{ ok: boolean }>(baseUrl, '/auth/email-code', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  })
+}
+
 export function loginPlatformUser(baseUrl: string, request: PlatformAuthRequest): Promise<PlatformAuthResponse> {
   return requestJson<PlatformAuthResponse>(baseUrl, '/auth/login', {
     method: 'POST',

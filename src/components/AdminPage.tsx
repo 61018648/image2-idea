@@ -31,7 +31,7 @@ import { useStore } from '../store'
 import { CloseIcon, CodeIcon, EditIcon, HistoryIcon, LinkIcon, PlusIcon, RefreshIcon, SettingsIcon, UserIcon } from './icons'
 
 type AdminTab = 'dashboard' | 'config' | 'plans' | 'users' | 'orders' | 'generationLogs'
-type ConfigForm = PlatformAdminConfigResponse['config'] & { openaiApiKey: string; epayKey: string }
+type ConfigForm = PlatformAdminConfigResponse['config'] & { openaiApiKey: string; epayKey: string; smtpPassword: string }
 type UserForm = { username: string; email: string; phone: string; adminNote: string; password: string; displayName: string; role: 'user' | 'admin'; availableCredits: string }
 type PlanForm = { id: string; name: string; uses: string; priceYuan: string; enabled: boolean; recommended: boolean; description: string }
 type EditUserForm = {
@@ -66,7 +66,7 @@ function inputClass() {
 }
 
 function toConfigForm(config: PlatformAdminConfigResponse['config']): ConfigForm {
-  return { ...config, upstreamTimeoutMs: Math.max(5, Math.round(config.upstreamTimeoutMs / 1000)), openaiApiKey: '', epayKey: '' }
+  return { ...config, upstreamTimeoutMs: Math.max(5, Math.round(config.upstreamTimeoutMs / 1000)), openaiApiKey: '', epayKey: '', smtpPassword: '' }
 }
 
 function StatCard({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
@@ -312,6 +312,15 @@ export default function AdminPage() {
         siteName: configForm.siteName,
         publicBaseUrl: configForm.publicBaseUrl,
         supportEmail: configForm.supportEmail,
+        smtpEnabled: configForm.smtpEnabled,
+        smtpHost: configForm.smtpHost,
+        smtpPort: Number(configForm.smtpPort) || 465,
+        smtpSecure: configForm.smtpSecure,
+        smtpUser: configForm.smtpUser,
+        smtpFromName: configForm.smtpFromName,
+        smtpFromEmail: configForm.smtpFromEmail,
+        emailVerificationOnRegister: configForm.emailVerificationOnRegister,
+        emailVerificationOnProfileUpdate: configForm.emailVerificationOnProfileUpdate,
         openaiBaseUrl: configForm.openaiBaseUrl || configForm.imageBaseUrl,
         openaiImageModel: configForm.openaiImageModel || configForm.imageModel,
         upstreamTimeoutMs: Math.max(5, Number(configForm.upstreamTimeoutMs) || 120) * 1000,
@@ -327,6 +336,7 @@ export default function AdminPage() {
       }
       if (configForm.openaiApiKey.trim()) payload.openaiApiKey = configForm.openaiApiKey.trim()
       if (configForm.epayKey.trim()) payload.epayKey = configForm.epayKey.trim()
+      if (configForm.smtpPassword.trim()) payload.smtpPassword = configForm.smtpPassword.trim()
       const response = await updateAdminConfig(activeProfile.baseUrl, payload)
       setConfig(response.config)
       setConfigForm(toConfigForm(response.config))
@@ -755,6 +765,47 @@ export default function AdminPage() {
                   </Field>
                   <Field label="上游超时（秒）" hint="生图通常需要 60-120 秒，建议设置 180 秒以上。"><input className={inputClass()} type="number" min={5} max={600} value={configForm.upstreamTimeoutMs} onChange={(e) => patchConfigForm({ upstreamTimeoutMs: Number(e.target.value) })} /></Field>
                   <Field label="上游 API Key" hint={config?.hasOpenaiApiKey ? `已保存：${config.openaiApiKeyMasked}，留空则不修改` : '尚未保存 API Key'}><input className={inputClass()} type="password" value={configForm.openaiApiKey} onChange={(e) => patchConfigForm({ openaiApiKey: e.target.value })} /></Field>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-white/[0.08] dark:bg-gray-950">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <h3 className="text-base font-semibold text-gray-950 dark:text-white">发信邮箱</h3>
+                    <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">用于注册验证、用户修改邮箱和后续运营通知。建议使用企业邮箱或云邮件服务 SMTP。</p>
+                  </div>
+                  <StatusPill tone={configForm.smtpEnabled && configForm.smtpHost && configForm.smtpFromEmail ? 'green' : 'amber'} label={configForm.smtpEnabled ? 'SMTP 已启用' : '未启用'} />
+                </div>
+                <div className="mt-5 grid gap-4 md:grid-cols-2">
+                  <Field label="启用 SMTP 发信">
+                    <button type="button" onClick={() => patchConfigForm({ smtpEnabled: !configForm.smtpEnabled })} className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${configForm.smtpEnabled ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-700'}`}>
+                      <span className={`inline-block h-5 w-5 rounded-full bg-white transition ${configForm.smtpEnabled ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                    </button>
+                  </Field>
+                  <Field label="注册邮箱验证">
+                    <button type="button" onClick={() => patchConfigForm({ emailVerificationOnRegister: !configForm.emailVerificationOnRegister })} className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${configForm.emailVerificationOnRegister ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-700'}`}>
+                      <span className={`inline-block h-5 w-5 rounded-full bg-white transition ${configForm.emailVerificationOnRegister ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                    </button>
+                  </Field>
+                  <Field label="修改邮箱验证">
+                    <button type="button" onClick={() => patchConfigForm({ emailVerificationOnProfileUpdate: !configForm.emailVerificationOnProfileUpdate })} className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${configForm.emailVerificationOnProfileUpdate ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-700'}`}>
+                      <span className={`inline-block h-5 w-5 rounded-full bg-white transition ${configForm.emailVerificationOnProfileUpdate ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                    </button>
+                  </Field>
+                  <Field label="SMTP Host"><input className={inputClass()} value={configForm.smtpHost} onChange={(e) => patchConfigForm({ smtpHost: e.target.value })} placeholder="smtp.example.com" /></Field>
+                  <Field label="SMTP Port"><input className={inputClass()} type="number" min={1} max={65535} value={configForm.smtpPort} onChange={(e) => patchConfigForm({ smtpPort: Number(e.target.value) })} /></Field>
+                  <Field label="安全连接">
+                    <select className={inputClass()} value={configForm.smtpSecure ? 'ssl' : 'plain'} onChange={(e) => patchConfigForm({ smtpSecure: e.target.value === 'ssl' })}>
+                      <option value="ssl">SSL/TLS（常用 465）</option>
+                      <option value="plain">普通连接（常用 25/587）</option>
+                    </select>
+                  </Field>
+                  <Field label="SMTP 用户名"><input className={inputClass()} value={configForm.smtpUser} onChange={(e) => patchConfigForm({ smtpUser: e.target.value })} placeholder="通常为完整邮箱" /></Field>
+                  <Field label="SMTP 密码" hint={config?.smtpPasswordMasked ? `已保存：${config.smtpPasswordMasked}，留空则不修改` : '尚未保存 SMTP 密码或授权码'}>
+                    <input className={inputClass()} type="password" value={configForm.smtpPassword} onChange={(e) => patchConfigForm({ smtpPassword: e.target.value })} placeholder="邮箱授权码或 SMTP 密码" />
+                  </Field>
+                  <Field label="发件人名称"><input className={inputClass()} value={configForm.smtpFromName} onChange={(e) => patchConfigForm({ smtpFromName: e.target.value })} placeholder={configForm.siteName} /></Field>
+                  <Field label="发件人邮箱"><input className={inputClass()} type="email" value={configForm.smtpFromEmail} onChange={(e) => patchConfigForm({ smtpFromEmail: e.target.value })} placeholder="noreply@example.com" /></Field>
                 </div>
               </div>
 

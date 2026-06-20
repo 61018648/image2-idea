@@ -720,7 +720,7 @@ function mergePersistedState(persistedState: unknown, currentState: AppState): A
     typeof persisted.activeAgentConversationId === 'string' && (!hasPersistedAgentConversations || agentConversations.some((conversation) => conversation.id === persisted.activeAgentConversationId))
       ? persisted.activeAgentConversationId
       : agentConversations[0]?.id ?? null
-  const appMode = persisted.appMode === 'home' || persisted.appMode === 'gallery' || persisted.appMode === 'agent' || persisted.appMode === 'auth' || persisted.appMode === 'user-center' || persisted.appMode === 'admin' ? persisted.appMode : 'home'
+  const appMode = persisted.appMode === 'home' || persisted.appMode === 'gallery' || persisted.appMode === 'auth' || persisted.appMode === 'user-center' || persisted.appMode === 'plans' || persisted.appMode === 'admin' ? persisted.appMode : 'home'
   const galleryInputDraft = settings.persistInputOnRestart
     ? normalizeAgentInputDraft(persisted.galleryInputDraft ?? {
         prompt: persisted.prompt,
@@ -733,7 +733,7 @@ function mergePersistedState(persistedState: unknown, currentState: AppState): A
     ? normalizeAgentInputDrafts(persisted.agentInputDrafts, agentConversations)
     : normalizeAgentInputDraftsByKey(persisted.agentInputDrafts)
   let agentInputDrafts = cleanStaleAgentInputDrafts(normalizedAgentInputDrafts, activeAgentConversationId)
-  if (appMode === 'agent' && activeAgentConversationId && !agentInputDrafts[activeAgentConversationId] && settings.persistInputOnRestart && typeof persisted.prompt === 'string') {
+  if (persisted.appMode === 'agent' && activeAgentConversationId && !agentInputDrafts[activeAgentConversationId] && settings.persistInputOnRestart && typeof persisted.prompt === 'string') {
     agentInputDrafts = {
       ...agentInputDrafts,
       [activeAgentConversationId]: normalizeAgentInputDraft({
@@ -744,7 +744,7 @@ function mergePersistedState(persistedState: unknown, currentState: AppState): A
       }, Date.now()),
     }
   }
-  const restoredAgentDraft = appMode === 'agent' && activeAgentConversationId
+  const restoredAgentDraft = persisted.appMode === 'agent' && activeAgentConversationId
     ? agentInputDrafts[activeAgentConversationId] ?? null
     : null
   const favoriteCollections = Array.isArray(persisted.favoriteCollections)
@@ -1148,64 +1148,18 @@ export const useStore = create<AppState>()(
       // Mode
       appMode: 'home',
       setAppMode: (appMode) => {
-        if (appMode === 'home' || appMode === 'gallery' || appMode === 'auth' || appMode === 'user-center' || appMode === 'plans' || appMode === 'admin') {
-          const state = get()
-          const agentInputDrafts = saveActiveAgentInputDrafts(state)
-          const galleryInputDraft = saveGalleryInputDraft(state)
-          set((state) => ({
-            appMode,
-            agentInputDrafts,
-            galleryInputDraft,
-            agentMobileHeaderVisible: true,
-            selectedTaskIds: [],
-            selectedFavoriteCollectionIds: [],
-            agentEditingRoundId: null,
-            ...(state.appMode === 'agent' && appMode === 'gallery' ? restoreGalleryInputDraftState(galleryInputDraft) : {}),
-          }))
-          return
-        }
-
         const state = get()
-        const settings = normalizeSettings(state.settings)
-        const activeProfile = getActiveApiProfile(settings)
-
-        if (activeProfile.provider === 'openai' && activeProfile.apiMode === 'responses') {
-          const galleryInputDraft = saveGalleryInputDraft(state)
-          set((state) => ({
-            appMode: 'agent',
-            galleryInputDraft,
-            agentMobileHeaderVisible: false,
-            agentSidebarCollapsed: true,
-            agentAssetPanelCollapsed: true,
-            selectedTaskIds: [],
-            selectedFavoriteCollectionIds: [],
-            ...restoreAgentInputDraftState(state.agentInputDrafts, state.activeAgentConversationId),
-          }))
-          return
-        }
-
-        if (activeProfile.provider === 'openai' && activeProfile.apiMode !== 'responses') {
-          state.setConfirmDialog({
-            title: '需要 Responses API 配置',
-            message: `当前配置「${activeProfile.name}」使用的是 Images API，仅支持生成图片，无 Agent 模式需要的对话能力。\n\n请前往 API 配置页，将当前配置调整为 Responses API，或切换/新建一个支持 Responses API 的配置。`,
-            confirmText: '去设置',
-            cancelText: '取消',
-            action: () => {
-              useStore.getState().setShowSettings(true, 'api')
-            },
-          })
-          return
-        }
-
-        state.setConfirmDialog({
-          title: '配置不支持 Agent 模式',
-          message: `当前配置「${activeProfile.name}」所属的服务商暂不支持 Agent 模式。Agent 模式需要使用支持 Responses API 的 OpenAI 配置。\n\n请前往 API 配置页，切换或新建一个支持 Responses API 的配置。`,
-          confirmText: '去设置',
-          cancelText: '取消',
-          action: () => {
-            useStore.getState().setShowSettings(true, 'api')
-          },
-        })
+        const agentInputDrafts = saveActiveAgentInputDrafts(state)
+        const galleryInputDraft = saveGalleryInputDraft(state)
+        set(() => ({
+          appMode,
+          agentInputDrafts,
+          galleryInputDraft,
+          agentMobileHeaderVisible: true,
+          selectedTaskIds: [],
+          selectedFavoriteCollectionIds: [],
+          agentEditingRoundId: null,
+        }))
       },
 
       // Settings

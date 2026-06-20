@@ -115,15 +115,7 @@ async function ensureDefaultPlans(tx: Tx) {
   for (const plan of DEFAULT_PLANS) {
     await tx.plan.upsert({
       where: { id: plan.id },
-      update: {
-        name: plan.name,
-        credits: plan.credits,
-        priceCents: plan.priceCents,
-        currency: plan.currency,
-        enabled: plan.enabled,
-        recommended: plan.recommended,
-        description: plan.description,
-      },
+      update: {},
       create: {
         id: plan.id,
         name: plan.name,

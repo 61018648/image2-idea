@@ -1,15 +1,23 @@
 import { createSessionCookie, clearSessionCookie, readCookieSession } from '../auth/cookieSession.js'
 import { hashPassword, verifyPassword } from '../auth/password.js'
 import { createMysqlUser, findMysqlUserByLogin, findMysqlUserByUsername, findMysqlUserById, updateMysqlUserLastLogin } from '../auth/mysqlAccounts.js'
+import { readPlatformConfig } from '../admin/configStore.js'
 import { getBillingStore } from '../billing/store.js'
 import { useMysqlCompat } from '../db/mysqlCompat.js'
 import { getPrismaClient } from '../db/prisma.js'
+import { sendEmailVerificationCode, verifyEmailCode } from '../email/smtp.js'
 import { errorResponse, jsonResponse, readJsonRequest } from '../http.js'
 
 interface AuthBody {
   username?: unknown
   email?: unknown
   password?: unknown
+  verificationCode?: unknown
+}
+
+interface VerificationBody {
+  email?: unknown
+  purpose?: unknown
 }
 
 function normalizeUsername(value: unknown): string {
@@ -18,6 +26,10 @@ function normalizeUsername(value: unknown): string {
 
 function normalizePassword(value: unknown): string {
   return typeof value === 'string' ? value : ''
+}
+
+function normalizeEmail(value: unknown): string {
+  return typeof value === 'string' ? value.trim().toLowerCase() : ''
 }
 
 function validateAuthInput(username: string, password: string): string | null {
@@ -65,6 +77,15 @@ export async function handleAuthRequest(request: Request): Promise<Response> {
     return authResponse({ ok: true }, clearSessionCookie())
   }
 
+  if (pathname === '/api/platform/auth/email-code' && request.method === 'POST') {
+    const body = await readJsonRequest<VerificationBody>(request)
+    const email = normalizeEmail(body.email)
+    const purpose = body.purpose === 'profile_email' ? 'profile_email' : 'register'
+    if (!email || !/^\S+@\S+\.\S+$/.test(email)) return errorResponse('Valid email is required', 400, 'bad_request')
+    await sendEmailVerificationCode({ email, purpose })
+    return jsonResponse({ ok: true })
+  }
+
   if ((pathname === '/api/platform/auth/register' || pathname === '/api/platform/auth/login') && request.method === 'POST') {
     const body = await readJsonRequest<AuthBody>(request)
     const username = normalizeUsername(body.username ?? body.email)
@@ -73,13 +94,21 @@ export async function handleAuthRequest(request: Request): Promise<Response> {
     if (validationError) return errorResponse(validationError, 400, 'bad_request')
 
     if (pathname === '/api/platform/auth/register') {
+      const email = normalizeEmail(body.email)
+      const verificationCode = typeof body.verificationCode === 'string' ? body.verificationCode.trim() : ''
+      const config = await readPlatformConfig()
+      if (config.emailVerificationOnRegister) {
+        if (!email) return errorResponse('Email is required', 400, 'email_required')
+        const verified = await verifyEmailCode({ email, purpose: 'register', code: verificationCode })
+        if (!verified) return errorResponse('Invalid email verification code', 400, 'invalid_email_code')
+      }
       if (useMysqlCompat()) {
         const existing = await findMysqlUserByUsername(username)
         if (existing) return errorResponse('Username is already registered', 409, 'username_exists')
         const passwordHash = await hashPassword(password)
         const account = await createMysqlUser({
           username,
-          email: null,
+          email: email || null,
           passwordHash,
           displayName: username,
         })
@@ -94,7 +123,7 @@ export async function handleAuthRequest(request: Request): Promise<Response> {
       const account = await prisma.userAccount.create({
         data: {
           id: String(Date.now()),
-          email: null,
+          email: email || null,
           passwordHash,
           displayName: username,
           role: 'user',

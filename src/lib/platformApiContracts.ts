@@ -64,6 +64,8 @@ export interface PlatformUserInfo {
 export interface PlatformAuthRequest {
   username: string
   password: string
+  email?: string
+  verificationCode?: string
 }
 
 export interface PlatformAuthResponse {
@@ -83,6 +85,7 @@ export interface PlatformMeResponse {
 
 export interface PlatformUpdateProfileRequest {
   email?: string | null
+  emailVerificationCode?: string | null
   phone?: string | null
   displayName?: string | null
   avatarUrl?: string | null
@@ -164,6 +167,8 @@ export interface PlatformPublicConfigResponse {
   config: {
     siteName: string
     supportEmail: string
+    emailVerificationOnRegister: boolean
+    emailVerificationOnProfileUpdate: boolean
     epayEnabled: boolean
     epayPaymentTypes: PlatformEpayPaymentType[]
     balanceUnitCents: number
@@ -350,6 +355,16 @@ export interface PlatformAdminConfigResponse {
     siteName: string
     publicBaseUrl: string
     supportEmail: string
+    smtpEnabled: boolean
+    smtpHost: string
+    smtpPort: number
+    smtpSecure: boolean
+    smtpUser: string
+    smtpPasswordMasked: string
+    smtpFromName: string
+    smtpFromEmail: string
+    emailVerificationOnRegister: boolean
+    emailVerificationOnProfileUpdate: boolean
     openaiBaseUrl: string
     openaiImageModel: string
     upstreamTimeoutMs: number
@@ -381,6 +396,16 @@ export interface PlatformAdminUpdateConfigRequest {
   siteName?: string
   publicBaseUrl?: string
   supportEmail?: string
+  smtpEnabled?: boolean
+  smtpHost?: string
+  smtpPort?: number
+  smtpSecure?: boolean
+  smtpUser?: string
+  smtpPassword?: string
+  smtpFromName?: string
+  smtpFromEmail?: string
+  emailVerificationOnRegister?: boolean
+  emailVerificationOnProfileUpdate?: boolean
   openaiApiKey?: string
   openaiBaseUrl?: string
   openaiImageModel?: string

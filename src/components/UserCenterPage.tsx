@@ -14,6 +14,7 @@ import {
   getPlatformPublicConfig,
   listPlatformOrders,
   resumePlatformCheckout,
+  sendPlatformProfileEmailCode,
   updatePlatformMe,
 } from '../lib/platformAccountApi'
 import type {
@@ -187,9 +188,13 @@ export default function UserCenterPage() {
   const [error, setError] = useState<string | null>(null)
   const [data, setData] = useState<UserCenterData>(EMPTY_DATA)
   const [profileDraft, setProfileDraft] = useState({ displayName: '', email: '', phone: '', avatarUrl: '' })
+  const [emailVerificationCode, setEmailVerificationCode] = useState('')
+  const [sendingEmailCode, setSendingEmailCode] = useState(false)
 
   const isAdmin = data.me?.user.mode === 'development' || data.me?.user.role === 'admin'
   const avatarUrl = profileDraft.avatarUrl || data.me?.account.avatarUrl || ''
+  const profileEmailChanged = profileDraft.email.trim().toLowerCase() !== (data.me?.user.email ?? '').trim().toLowerCase()
+  const profileEmailVerificationRequired = Boolean(data.publicConfig?.emailVerificationOnProfileUpdate && profileEmailChanged && profileDraft.email.trim())
 
   const tabs = useMemo(() => {
     const items: Array<{ id: UserCenterTab; label: string; description: string; icon: ReactNode }> = [
@@ -230,6 +235,7 @@ export default function UserCenterPage() {
         phone: me.account.phone ?? '',
         avatarUrl: me.account.avatarUrl ?? '',
       })
+      setEmailVerificationCode('')
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       if (message === 'Unauthorized') {
@@ -285,6 +291,7 @@ export default function UserCenterPage() {
       const response = await updatePlatformMe(activeProfile.baseUrl, {
         displayName: profileDraft.displayName,
         email: profileDraft.email,
+        emailVerificationCode: profileEmailVerificationRequired ? emailVerificationCode : undefined,
         phone: profileDraft.phone,
         avatarUrl: profileDraft.avatarUrl,
       })
@@ -413,6 +420,22 @@ export default function UserCenterPage() {
       })
     } catch (err) {
       showToast(err instanceof Error ? err.message : String(err), 'error')
+    }
+  }
+
+  const sendProfileEmailCode = async () => {
+    if (!profileDraft.email.trim()) {
+      showToast('请先输入邮箱', 'info')
+      return
+    }
+    setSendingEmailCode(true)
+    try {
+      await sendPlatformProfileEmailCode(activeProfile.baseUrl, profileDraft.email.trim())
+      showToast('验证码已发送，请查看邮箱', 'success')
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : String(err), 'error')
+    } finally {
+      setSendingEmailCode(false)
     }
   }
 
@@ -630,6 +653,27 @@ export default function UserCenterPage() {
                       placeholder="name@example.com"
                     />
                   </label>
+                  {profileEmailVerificationRequired && (
+                    <label className="grid gap-1">
+                      <span className="text-xs font-medium text-gray-500 dark:text-gray-400">邮箱验证码</span>
+                      <div className="flex gap-2">
+                        <input
+                          value={emailVerificationCode}
+                          onChange={(event) => setEmailVerificationCode(event.target.value)}
+                          className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm outline-none transition focus:border-blue-400 dark:border-white/[0.08] dark:bg-gray-950 dark:text-gray-100"
+                          placeholder="6 位验证码"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => void sendProfileEmailCode()}
+                          disabled={sendingEmailCode}
+                          className="shrink-0 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-60 dark:border-white/[0.08] dark:bg-gray-950 dark:text-gray-200 dark:hover:bg-white/[0.06]"
+                        >
+                          {sendingEmailCode ? '发送中' : '发送验证码'}
+                        </button>
+                      </div>
+                    </label>
+                  )}
                   <label className="grid gap-1">
                     <span className="text-xs font-medium text-gray-500 dark:text-gray-400">手机号</span>
                     <input
@@ -713,7 +757,7 @@ export default function UserCenterPage() {
                               {featured ? '推荐套餐' : '标准套餐'}
                             </div>
                             <h4 className="text-xl font-semibold tracking-tight">{plan.name}</h4>
-                            <p className={`mt-2 text-sm ${featured ? 'text-white/72' : 'text-gray-500 dark:text-gray-400'}`}>{plan.description || '?????????????????'}</p>
+                            <p className={`mt-2 text-sm ${featured ? 'text-white/72' : 'text-gray-500 dark:text-gray-400'}`}>{plan.description || '暂无描述'}</p>
                           </div>
                           <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-medium ${plan.enabled ? (featured ? 'bg-emerald-400/20 text-emerald-100 ring-1 ring-emerald-300/30' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-200') : (featured ? 'bg-white/10 text-white/60' : 'bg-gray-200 text-gray-600 dark:bg-white/[0.08] dark:text-gray-300')}`}>
                             {plan.enabled ? '可购买' : '已下架'}

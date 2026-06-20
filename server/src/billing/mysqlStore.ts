@@ -122,7 +122,7 @@ async function ensureDefaultPlans(conn?: mysql.PoolConnection) {
     await exec(
       `INSERT INTO plans (id, name, credits, price_cents, currency, enabled, recommended, description, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE name=VALUES(name), credits=VALUES(credits), price_cents=VALUES(price_cents), currency=VALUES(currency), enabled=VALUES(enabled), recommended=VALUES(recommended), description=VALUES(description), updated_at=VALUES(updated_at)`,
+       ON DUPLICATE KEY UPDATE id=id`,
       [plan.id, plan.name, plan.credits, plan.priceCents, plan.currency, plan.enabled ? 1 : 0, plan.recommended ? 1 : 0, plan.description ?? null, nowSql(), nowSql()],
     )
   }

@@ -1,15 +1,22 @@
 import { readRequiredSession } from '../auth/session.js'
+import { readPlatformConfig } from '../admin/configStore.js'
 import { errorResponse, getQueryNumber, jsonResponse, readJsonRequest } from '../http.js'
 import { getBillingStore } from '../billing/store.js'
 import { findMysqlUserByEmail, findMysqlUserById, updateMysqlUserProfile } from '../auth/mysqlAccounts.js'
 import { useMysqlCompat } from '../db/mysqlCompat.js'
 import { getPrismaClient } from '../db/prisma.js'
+import { sendEmailVerificationCode, verifyEmailCode } from '../email/smtp.js'
 
 interface UpdateProfileBody {
   email?: unknown
+  emailVerificationCode?: unknown
   phone?: unknown
   displayName?: unknown
   avatarUrl?: unknown
+}
+
+interface EmailCodeBody {
+  email?: unknown
 }
 
 async function readUserRole(userId: string, mode: 'development' | 'authenticated'): Promise<'admin' | 'user'> {
@@ -92,9 +99,17 @@ export async function handleAccountRequest(request: Request): Promise<Response> 
       if (session.mode !== 'authenticated') return errorResponse('Profile update requires an authenticated user', 401, 'unauthorized')
       const body = await readJsonRequest<UpdateProfileBody>(request)
       const email = normalizeEmail(body.email)
+      const emailVerificationCode = typeof body.emailVerificationCode === 'string' ? body.emailVerificationCode.trim() : ''
       const phone = normalizeOptionalText(body.phone, 32)
       const displayName = normalizeOptionalText(body.displayName, 191)
       const avatarUrl = normalizeOptionalText(body.avatarUrl, 256_000)
+      const currentProfile = await readProfile(session.userId, session.mode)
+      const emailChanged = typeof email !== 'undefined' && email !== (currentProfile.email ?? null)
+      const config = await readPlatformConfig()
+      if (emailChanged && email && config.emailVerificationOnProfileUpdate) {
+        const verified = await verifyEmailCode({ email, purpose: 'profile_email', code: emailVerificationCode })
+        if (!verified) return errorResponse('Invalid email verification code', 400, 'invalid_email_code')
+      }
 
       if (useMysqlCompat()) {
         if (email) {
@@ -125,6 +140,15 @@ export async function handleAccountRequest(request: Request): Promise<Response> 
         user: { id: updated.id, mode: session.mode, email: updated.email, role: updated.role === 'admin' ? 'admin' : 'user' },
         account: { userId: updated.id, displayName: updated.displayName ?? undefined, avatarUrl: updated.avatarUrl ?? undefined },
       })
+    }
+
+    if (url.pathname === '/api/platform/me/email-code' && request.method === 'POST') {
+      if (session.mode !== 'authenticated') return errorResponse('Profile update requires an authenticated user', 401, 'unauthorized')
+      const body = await readJsonRequest<EmailCodeBody>(request)
+      const email = normalizeEmail(body.email)
+      if (!email) return errorResponse('Valid email is required', 400, 'bad_request')
+      await sendEmailVerificationCode({ email, purpose: 'profile_email' })
+      return jsonResponse({ ok: true })
     }
 
     if (url.pathname === '/api/platform/balance' && request.method === 'GET') {

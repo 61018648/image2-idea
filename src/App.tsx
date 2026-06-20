@@ -12,7 +12,6 @@ import UserCenterPage from './components/UserCenterPage'
 import PlansPage from './components/PlansPage'
 import AdminPage from './components/AdminPage'
 import GalleryPage from './components/GalleryPage'
-import AgentWorkspace from './components/AgentWorkspace'
 import InputBar from './components/InputBar'
 import DetailModal from './components/DetailModal'
 import Lightbox from './components/Lightbox'
@@ -79,10 +78,9 @@ export default function App() {
         useStore.getState().setAppMode('auth')
       } else if (pathname === '/gallery') {
         useStore.getState().setAppMode('gallery')
-      } else if (pathname === '/studio') {
-        useStore.getState().setAppMode('agent')
       } else if (pathname === '/agent') {
-        useStore.getState().setAppMode('agent')
+        useStore.getState().setAppMode('gallery')
+        window.history.replaceState(null, '', '/gallery')
       } else if (pathname === '/') {
         useStore.getState().setAppMode('home')
       }
@@ -109,8 +107,6 @@ export default function App() {
       <Header />
       {appMode === 'home' ? (
         <HomePage />
-      ) : appMode === 'agent' ? (
-        <AgentWorkspace />
       ) : appMode === 'auth' ? (
         <PlatformAuthPage />
       ) : appMode === 'admin' ? (

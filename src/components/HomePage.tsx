@@ -212,7 +212,7 @@ export default function HomePage() {
             <p className="mt-2 text-sm text-white/70 dark:text-gray-600">从首页、用户中心、套餐和后台开始，让核心付费闭环先稳定跑起来。</p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
-            <button type="button" onClick={() => navigate('/gallery', 'gallery')} className="rounded-2xl bg-white px-5 py-3 text-sm font-black text-gray-950 transition hover:bg-amber-100 dark:bg-gray-950 dark:text-white">进入生图工作台</button>
+            <button type="button" onClick={() => navigate('/gallery', 'gallery')} className="rounded-2xl bg-white px-5 py-3 text-sm font-black text-gray-950 transition hover:bg-amber-100 dark:bg-gray-950 dark:text-white">进入生图画廊</button>
             <button type="button" onClick={() => navigate('/user', 'user-center')} className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/20 px-5 py-3 text-sm font-bold text-white transition hover:bg-white/10 dark:border-gray-950/15 dark:text-gray-950 dark:hover:bg-gray-950/5">
               <LinkIcon className="h-5 w-5" />
               打开用户中心

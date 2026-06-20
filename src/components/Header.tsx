@@ -10,7 +10,7 @@ import { useFavoriteCollectionTitle } from './FavoriteCollections'
 import HistoryModal from './HistoryModal'
 import { EditIcon, HistoryIcon, UserIcon } from './icons'
 
-type NavKey = 'home' | 'gallery' | 'studio' | 'plans'
+type NavKey = 'home' | 'gallery' | 'plans'
 
 export default function Header() {
   const appMode = useStore((s) => s.appMode)
@@ -35,9 +35,7 @@ export default function Header() {
   const [currentPath, setCurrentPath] = useState(() => (typeof window === 'undefined' ? '/' : window.location.pathname))
   const historyButtonRef = useRef<HTMLButtonElement>(null)
   const siteName = publicConfig?.siteName || 'Image Idea'
-  const activeNav: NavKey | null = currentPath === '/studio'
-    ? 'studio'
-    : appMode === 'plans'
+  const activeNav: NavKey | null = appMode === 'plans'
       ? 'plans'
     : appMode === 'home'
       ? 'home'
@@ -89,7 +87,6 @@ export default function Header() {
 
   const openHomePage = () => navigate('/', 'home')
   const openGalleryPage = () => navigate('/gallery', 'gallery')
-  const openStudioPage = () => navigate('/studio', 'agent')
   const openPlansPage = () => navigate('/plans', 'plans')
 
   useEffect(() => {
@@ -157,7 +154,6 @@ export default function Header() {
   const navItems: Array<{ key: NavKey; label: string; compactLabel: string; onClick: () => void }> = [
     { key: 'home', label: '首页', compactLabel: '首页', onClick: openHomePage },
     { key: 'gallery', label: '作品画廊', compactLabel: '作品', onClick: openGalleryPage },
-    { key: 'studio', label: '生图工作台', compactLabel: '生图', onClick: openStudioPage },
     { key: 'plans', label: '套餐充值', compactLabel: '套餐', onClick: openPlansPage },
   ]
 
