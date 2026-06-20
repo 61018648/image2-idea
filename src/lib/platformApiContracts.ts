@@ -120,6 +120,8 @@ export interface PlatformPlanResponse {
   priceCents: number
   currency: 'USD' | 'CNY'
   enabled: boolean
+  recommended: boolean
+  description?: string
 }
 
 export interface PlatformUserPlanPackageResponse {
@@ -156,12 +158,27 @@ export interface PlatformCreateCheckoutRequest {
   paymentType?: 'alipay' | 'wxpay' | 'qqpay'
 }
 
+export type PlatformEpayPaymentType = 'alipay' | 'wxpay' | 'qqpay'
+
+export interface PlatformPublicConfigResponse {
+  config: {
+    siteName: string
+    supportEmail: string
+    epayEnabled: boolean
+    epayPaymentTypes: PlatformEpayPaymentType[]
+    balanceUnitCents: number
+  }
+}
+
 export interface PlatformOrderResponse {
   id: string
   userId: string
   planId: string
   status: 'pending' | 'paid' | 'cancelled' | 'expired'
+  originalAmountCents: number
   amountCents: number
+  balanceApplied: number
+  balanceAppliedCents: number
   currency: 'USD' | 'CNY'
   credits: number
   provider: PlatformPaymentProvider
@@ -178,7 +195,7 @@ export interface PlatformCreateOrderResponse {
 export interface PlatformCheckoutResponse {
   order: PlatformOrderResponse
   checkout: {
-    status: 'not_configured' | 'redirect' | 'qr_code'
+    status: 'not_configured' | 'redirect' | 'qr_code' | 'balance_paid'
     provider: Exclude<PlatformPaymentProvider, 'dev'>
     message?: string
     checkoutUrl?: string
@@ -189,6 +206,10 @@ export interface PlatformCheckoutResponse {
 
 export interface PlatformOrdersResponse {
   orders: PlatformOrderResponse[]
+}
+
+export interface PlatformOrderDetailResponse {
+  order: PlatformOrderResponse
 }
 
 export interface PlatformAdminStatsResponse {
@@ -270,6 +291,32 @@ export interface PlatformAdminOrdersResponse {
   orders: PlatformAdminOrderResponse[]
 }
 
+export interface PlatformAdminPaymentEventResponse {
+  id: string
+  provider: PlatformPaymentProvider
+  providerEventId: string
+  orderId?: string | null
+  processedAt: string
+  raw: unknown
+}
+
+export interface PlatformAdminPaymentEventsResponse {
+  events: PlatformAdminPaymentEventResponse[]
+}
+
+export interface PlatformAdminConfirmPaymentRequest {
+  orderId: string
+  providerEventId?: string
+  providerPaymentId?: string
+  paidAmountCents?: number
+  note?: string
+}
+
+export interface PlatformAdminConfirmPaymentResponse {
+  order: PlatformOrderResponse
+  duplicate: boolean
+}
+
 export interface PlatformAdminPlansResponse {
   plans: PlatformPlanResponse[]
 }
@@ -281,6 +328,8 @@ export interface PlatformAdminUpsertPlanRequest {
   priceCents: number
   currency: 'USD' | 'CNY'
   enabled: boolean
+  recommended?: boolean
+  description?: string
 }
 
 export interface PlatformAdminUpsertPlanResponse {
@@ -313,7 +362,9 @@ export interface PlatformAdminConfigResponse {
     epayKeyMasked: string
     epayReturnUrl: string
     epayNotifyUrl: string
+    epayPaymentTypes: PlatformEpayPaymentType[]
     creditsPerImage: number
+    balanceUnitCents: number
     imageModel: string
     imageBaseUrl: string
     paymentProviders: Record<string, boolean>
@@ -341,7 +392,9 @@ export interface PlatformAdminUpdateConfigRequest {
   epayKey?: string
   epayReturnUrl?: string
   epayNotifyUrl?: string
+  epayPaymentTypes?: PlatformEpayPaymentType[]
   creditsPerImage?: number
+  balanceUnitCents?: number
 }
 
 export interface PlatformAdminCreateUserRequest {

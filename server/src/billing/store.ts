@@ -1,5 +1,6 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
+import { loadEnvFile } from '../env.js'
 import { getPrismaClient } from '../db/prisma.js'
 import { useMysqlCompat } from '../db/mysqlCompat.js'
 import { DEFAULT_PLANS } from './plans.js'
@@ -26,6 +27,8 @@ const EMPTY_STATE: BillingState = {
   orders: {},
   paymentEvents: {},
 }
+
+loadEnvFile()
 
 const DEFAULT_FILE = process.env.PLATFORM_DATA_FILE?.trim() || ''
 
@@ -98,6 +101,33 @@ function readLedgerSourceIdExists(state: BillingState, sourceId: string): boolea
   return state.ledger.some((entry) => entry.sourceId === sourceId)
 }
 
+function clampBalanceUnitCents(value: unknown): number {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return 100
+  return Math.max(1, Math.min(100_000, Math.trunc(numeric)))
+}
+
+function getOrderOriginalAmount(order: Order): number {
+  return typeof order.originalAmountCents === 'number' ? order.originalAmountCents : order.amountCents + (order.balanceAppliedCents ?? 0)
+}
+
+function addPackageForPaidOrder(state: BillingState, order: Order, plan: Plan) {
+  ensureAccount(state, order.userId)
+  if (state.packages.some((item) => item.orderId === order.id)) return
+  const createdAt = now()
+  state.packages.push({
+    id: genId('pkg'),
+    userId: order.userId,
+    planId: order.planId,
+    orderId: order.id,
+    totalUses: plan.credits,
+    remainingUses: plan.credits,
+    status: 'active',
+    createdAt,
+    updatedAt: createdAt,
+  })
+}
+
 async function loadState(file: string): Promise<BillingState> {
   if (!file) return cloneState(EMPTY_STATE)
   try {
@@ -161,6 +191,8 @@ function createStore(initial: BillingState): BillingStore {
           priceCents: Math.max(0, Math.trunc(plan.priceCents)),
           currency: plan.currency === 'USD' ? 'USD' : 'CNY',
           enabled: Boolean(plan.enabled),
+          recommended: Boolean(plan.recommended),
+          ...(plan.description ? { description: plan.description.trim() } : {}),
         }
         if (!normalized.id) throw new Error('Plan ID is required')
         if (!normalized.name) throw new Error('Plan name is required')
@@ -179,6 +211,25 @@ function createStore(initial: BillingState): BillingStore {
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
         .slice(0, Math.max(1, Math.min(100, Math.trunc(limit || 20)))))
     },
+    async getOrder(userId, orderId) {
+      return mutate((draft) => {
+        const order = draft.orders[orderId]
+        return order?.userId === userId ? order : null
+      })
+    },
+    async getOrderById(orderId) {
+      return mutate((draft) => draft.orders[orderId] ?? null)
+    },
+    async getPendingOrder(userId) {
+      return mutate((draft) => Object.values(draft.orders)
+        .filter((order) => order.userId === userId && order.status === 'pending')
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ?? null)
+    },
+    async listPaymentEvents(limit = 50) {
+      return mutate((draft) => Object.values(draft.paymentEvents)
+        .sort((a, b) => b.processedAt.localeCompare(a.processedAt))
+        .slice(0, Math.max(1, Math.min(200, Math.trunc(limit || 50)))))
+    },
     async getAdminStats() {
       return mutate((draft) => {
         const orders = Object.values(draft.orders)
@@ -189,31 +240,76 @@ function createStore(initial: BillingState): BillingStore {
           orders: orders.length,
           paidOrders: paidOrders.length,
           pendingOrders: orders.filter((order) => order.status === 'pending').length,
-          revenueCents: paidOrders.reduce((sum, order) => sum + order.amountCents, 0),
+          revenueCents: paidOrders.reduce((sum, order) => sum + getOrderOriginalAmount(order), 0),
           creditsIssued: ledger.filter((entry) => entry.amount > 0).reduce((sum, entry) => sum + entry.amount, 0),
           creditsDebited: Math.abs(ledger.filter((entry) => entry.amount < 0).reduce((sum, entry) => sum + entry.amount, 0)),
           availableCredits: Object.values(draft.balances).reduce((sum, balance) => sum + balance.availableCredits, 0),
         }
       })
     },
-    async createOrder(userId, planId, provider = 'dev') {
+    async createOrder(userId, planId, provider = 'dev', options = {}) {
       return mutate((draft) => {
         ensureAccount(draft, userId)
+        const pendingOrder = Object.values(draft.orders).find((order) => order.userId === userId && order.status === 'pending')
+        if (pendingOrder) throw new Error(`Pending order exists: ${pendingOrder.id}`)
         const plan = getPlan(draft, planId)
         if (!plan) throw new Error('Plan not found')
+        const balanceUnitCents = clampBalanceUnitCents(options.balanceUnitCents)
+        const balance = ensureBalance(draft, userId)
+        const maxBalanceUnitsByAmount = Math.floor(plan.priceCents / balanceUnitCents)
+        const balanceApplied = options.useBalance === false ? 0 : Math.max(0, Math.min(balance.availableCredits, maxBalanceUnitsByAmount))
+        const balanceAppliedCents = balanceApplied * balanceUnitCents
+        const amountCents = Math.max(0, plan.priceCents - balanceAppliedCents)
         const order: Order = {
           id: genOrderId(),
           userId,
           planId,
-          status: 'pending',
-          amountCents: plan.priceCents,
+          status: amountCents === 0 && options.autoPayCovered !== false ? 'paid' : 'pending',
+          originalAmountCents: plan.priceCents,
+          amountCents,
+          balanceApplied,
+          balanceAppliedCents,
           currency: plan.currency,
           credits: plan.credits,
           provider,
           createdAt: now(),
+          ...(amountCents === 0 && options.autoPayCovered !== false ? { paidAt: now() } : {}),
         }
         draft.orders[order.id] = order
+        if (balanceApplied > 0) {
+          addLedgerEntry(draft, {
+            userId,
+            type: 'debit',
+            amount: -balanceApplied,
+            source: 'order',
+            sourceId: `order-balance:${order.id}`,
+            description: `余额抵扣套餐订单 ${order.id}`,
+          })
+        }
+        if (order.status === 'paid') {
+          addPackageForPaidOrder(draft, order, plan)
+        }
         return order
+      })
+    },
+    async cancelOrder(userId, orderId) {
+      return mutate((draft) => {
+        const order = draft.orders[orderId]
+        if (!order || order.userId !== userId) throw new Error('Order not found')
+        if (order.status !== 'pending') throw new Error('Only pending orders can be cancelled')
+        const updatedOrder: Order = { ...order, status: 'cancelled' }
+        draft.orders[order.id] = updatedOrder
+        if ((order.balanceApplied ?? 0) > 0 && !readLedgerSourceIdExists(draft, `refund:order-balance:${order.id}`)) {
+          addLedgerEntry(draft, {
+            userId: order.userId,
+            type: 'refund',
+            amount: order.balanceApplied,
+            source: 'order',
+            sourceId: `refund:order-balance:${order.id}`,
+            description: `取消订单退回余额 ${order.id}`,
+          })
+        }
+        return updatedOrder
       })
     },
     async markOrderPaid(input) {
@@ -249,21 +345,7 @@ function createStore(initial: BillingState): BillingStore {
           raw: input.raw,
         }
 
-        ensureAccount(draft, order.userId)
-        if (!draft.packages.some((item) => item.orderId === order.id)) {
-          const createdAt = now()
-          draft.packages.push({
-            id: genId('pkg'),
-            userId: order.userId,
-            planId: order.planId,
-            orderId: order.id,
-            totalUses: plan.credits,
-            remainingUses: plan.credits,
-            status: 'active',
-            createdAt,
-            updatedAt: createdAt,
-          })
-        }
+        addPackageForPaidOrder(draft, order, plan)
         return { order: updatedOrder, duplicate: false as const }
       })
     },

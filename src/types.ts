@@ -1,7 +1,7 @@
 // ===== 设置 =====
 
 export type ApiMode = 'images' | 'responses'
-export type AppMode = 'gallery' | 'agent' | 'auth' | 'user-center' | 'admin'
+export type AppMode = 'home' | 'gallery' | 'agent' | 'auth' | 'user-center' | 'plans' | 'admin'
 export type ReferenceImageEditAction = 'ask' | 'replace-reference' | 'add-mask'
 export const ZIP_DOWNLOAD_ROUTE_VALUES = [
   'task-selection',

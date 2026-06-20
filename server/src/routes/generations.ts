@@ -61,6 +61,10 @@ function genJobId(userId: string): string {
 }
 
 function mapJobResponse(job: GenerationJob): GenerationJobResponse {
+  const publicErrorMessage = job.errorMessage
+    ? (job.status === 'cancelled' ? '任务已取消' : '生成失败，请稍后重试或联系管理员')
+    : undefined
+
   return {
     id: job.id,
     status: job.status,
@@ -70,7 +74,7 @@ function mapJobResponse(job: GenerationJob): GenerationJobResponse {
     ...(job.rawImageUrls?.length ? { rawImageUrls: job.rawImageUrls } : {}),
     ...(job.revisedPrompts?.length ? { revisedPrompts: job.revisedPrompts } : {}),
     ...(job.actualParams ? { actualParams: job.actualParams } : {}),
-    ...(job.errorMessage ? { errorMessage: job.errorMessage } : {}),
+    ...(publicErrorMessage ? { errorMessage: publicErrorMessage } : {}),
     createdAt: job.createdAt,
     ...(job.startedAt ? { startedAt: job.startedAt } : {}),
     ...(job.finishedAt ? { finishedAt: job.finishedAt } : {}),
@@ -175,7 +179,7 @@ export async function handleGenerationsRequest(request: Request): Promise<Respon
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     if (message === 'Insufficient credits') return errorResponse('Insufficient credits', 402, 'insufficient_credits')
-    return errorResponse(message, 400, 'bad_request')
+    return errorResponse('生成任务创建失败，请稍后重试或联系管理员', 400, 'bad_request')
   }
 }
 

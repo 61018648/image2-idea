@@ -54,5 +54,10 @@ export default defineConfig(({ command }) => {
             }
           : platformProxy,
     },
+    test: {
+      env: {
+        VITE_DEFAULT_PROVIDER: 'openai',
+      },
+    },
   }
 })

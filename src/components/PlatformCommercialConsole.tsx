@@ -161,7 +161,7 @@ export default function PlatformCommercialConsole() {
           <div className="space-y-2">
             <h2 className="text-2xl font-semibold tracking-tight text-gray-950 dark:text-white sm:text-3xl">账户与计费</h2>
             <p className="max-w-3xl text-sm leading-6 text-gray-600 dark:text-gray-300">
-              查看当前账号余额、最近订单、积分流水和可用套餐。管理员账号会在下方显示运营后台指标。
+              查看当前账号余额、最近订单、余额流水和可用套餐。管理员账号会在下方显示运营后台指标。
             </p>
           </div>
 
@@ -169,7 +169,7 @@ export default function PlatformCommercialConsole() {
             <div className="rounded-lg border border-gray-200 bg-gray-50/80 p-4 dark:border-white/[0.08] dark:bg-white/[0.04]">
               <div className="text-xs text-gray-500 dark:text-gray-400">可用余额</div>
               <div className="mt-2 text-3xl font-semibold text-gray-950 dark:text-white">{loading ? '...' : summary?.balance ?? 0}</div>
-              <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">credits</div>
+              <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">余额</div>
             </div>
             <div className="rounded-lg border border-gray-200 bg-gray-50/80 p-4 dark:border-white/[0.08] dark:bg-white/[0.04]">
               <div className="text-xs text-gray-500 dark:text-gray-400">最近订单</div>
@@ -179,7 +179,7 @@ export default function PlatformCommercialConsole() {
             <div className="rounded-lg border border-gray-200 bg-gray-50/80 p-4 dark:border-white/[0.08] dark:bg-white/[0.04]">
               <div className="text-xs text-gray-500 dark:text-gray-400">最近流水</div>
               <div className="mt-2 text-sm font-semibold text-gray-950 dark:text-white">{loading ? '...' : summary?.recentLedgerLabel ?? '暂无流水'}</div>
-              <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">积分变动</div>
+              <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">余额变动</div>
             </div>
             <div className="rounded-lg border border-gray-200 bg-gray-50/80 p-4 dark:border-white/[0.08] dark:bg-white/[0.04]">
               <div className="text-xs text-gray-500 dark:text-gray-400">可售套餐</div>

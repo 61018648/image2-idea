@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+﻿import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
-import { createPlatformCheckout, createPlatformOrder, getPlatformAdminStats, getPlatformBalance, getPlatformLedger, getPlatformMe, getPlatformPlans, listPlatformOrders, notifyDevPlatformPayment } from '../lib/platformAccountApi'
+import { cancelPlatformOrder, createPlatformCheckout, createPlatformOrder, getPlatformAdminStats, getPlatformBalance, getPlatformLedger, getPlatformMe, getPlatformPlans, listPlatformOrders, notifyDevPlatformPayment } from '../lib/platformAccountApi'
 import type { PlatformAdminStatsResponse, PlatformBalanceResponse, PlatformGenerationJobResponse, PlatformLedgerEntryResponse, PlatformOrderResponse, PlatformPlanResponse, PlatformUserInfo } from '../lib/platformApiContracts'
 import { logoutPlatformUser } from '../lib/platformAuthApi'
 import { listPlatformGenerations } from '../lib/platformGenerationApi'
@@ -63,7 +63,7 @@ function formatDateTime(value?: string): string {
 
 function getUnitPrice(plan: PlatformPlanResponse): string {
   if (!plan.credits) return '-'
-  return `${(plan.priceCents / plan.credits / 100).toFixed(3)} ${plan.currency}/credit`
+  return `${(plan.priceCents / plan.credits / 100).toFixed(3)} ${plan.currency}/次`
 }
 
 function StatusPill({ children, tone = 'gray' }: { children: string; tone?: 'gray' | 'green' | 'blue' | 'amber' | 'red' }) {
@@ -89,6 +89,7 @@ function EmptyState({ title, body }: { title: string; body: string }) {
 export default function PlatformBillingModal({ baseUrl, onClose }: PlatformBillingModalProps) {
   const modalRef = useRef<HTMLDivElement>(null)
   const showToast = useStore((s) => s.showToast)
+  const setConfirmDialog = useStore((s) => s.setConfirmDialog)
   const setShowSettings = useStore((s) => s.setShowSettings)
   const [tab, setTab] = useState<BillingTab>('overview')
   const [user, setUser] = useState<PlatformUserInfo | null>(null)
@@ -100,6 +101,7 @@ export default function PlatformBillingModal({ baseUrl, onClose }: PlatformBilli
   const [adminStats, setAdminStats] = useState<PlatformAdminStatsResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [workingPlanId, setWorkingPlanId] = useState<string | null>(null)
+  const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null)
   const [checkoutNotice, setCheckoutNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -151,6 +153,8 @@ export default function PlatformBillingModal({ baseUrl, onClose }: PlatformBilli
     }
   }, [orders, plans])
 
+  const pendingOrder = useMemo(() => orders.find((order) => order.status === 'pending') ?? null, [orders])
+
   const handleLogout = async () => {
     try {
       await logoutPlatformUser(baseUrl)
@@ -165,6 +169,12 @@ export default function PlatformBillingModal({ baseUrl, onClose }: PlatformBilli
   }
 
   const handleCreateDevOrder = async (plan: PlatformPlanResponse) => {
+    if (pendingOrder) {
+      setTab('orders')
+      setCheckoutNotice('当前已有待支付订单，请先完成支付或取消订单后再购买新套餐')
+      showToast('请先处理待支付订单', 'info')
+      return
+    }
     setWorkingPlanId(plan.id)
     try {
       const { order } = await createPlatformOrder(baseUrl, { planId: plan.id, provider: 'dev' })
@@ -176,7 +186,7 @@ export default function PlatformBillingModal({ baseUrl, onClose }: PlatformBilli
       })
       await refresh()
       window.dispatchEvent(new Event('platform-billing-updated'))
-      showToast(`已购买 ${plan.credits} credits`, 'success')
+      showToast(`已购买 ${plan.credits} 次`, 'success')
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       setError(message)
@@ -187,6 +197,12 @@ export default function PlatformBillingModal({ baseUrl, onClose }: PlatformBilli
   }
 
   const handleCreateCheckout = async (plan: PlatformPlanResponse) => {
+    if (pendingOrder) {
+      setTab('orders')
+      setCheckoutNotice('当前已有待支付订单，请先完成支付或取消订单后再购买新套餐')
+      showToast('请先处理待支付订单', 'info')
+      return
+    }
     setWorkingPlanId(plan.id)
     try {
       const { checkout } = await createPlatformCheckout(baseUrl, { planId: plan.id, provider: 'epay' })
@@ -199,12 +215,50 @@ export default function PlatformBillingModal({ baseUrl, onClose }: PlatformBilli
       setCheckoutNotice(message)
       showToast(message, 'info')
     } catch (err) {
+      const pendingError = err instanceof Error && 'code' in err && (err as Error & { code?: string }).code === 'pending_order_exists'
+      const returnedOrder = err instanceof Error && 'order' in err ? (err as Error & { order?: PlatformOrderResponse }).order : undefined
+      if (pendingError) {
+        if (returnedOrder) setOrders((current) => current.some((order) => order.id === returnedOrder.id) ? current : [returnedOrder, ...current])
+        setTab('orders')
+        setCheckoutNotice('当前已有待支付订单，请先完成支付或取消订单后再购买新套餐')
+        showToast('请先处理待支付订单', 'info')
+        return
+      }
       const message = err instanceof Error ? err.message : String(err)
       setError(message)
       showToast(message, 'error')
     } finally {
       setWorkingPlanId(null)
     }
+  }
+
+  const cancelOrderNow = async (order: PlatformOrderResponse) => {
+    setCancellingOrderId(order.id)
+    try {
+      const response = await cancelPlatformOrder(baseUrl, order.id)
+      setOrders((current) => current.map((item) => item.id === response.order.id ? response.order : item))
+      setCheckoutNotice('订单已取消，可以重新购买套餐')
+      await refresh()
+      window.dispatchEvent(new Event('platform-billing-updated'))
+      showToast('订单已取消', 'success')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      setError(message)
+      showToast(message, 'error')
+    } finally {
+      setCancellingOrderId(null)
+    }
+  }
+
+  const handleCancelOrder = (order: PlatformOrderResponse) => {
+    setConfirmDialog({
+      title: '取消待支付订单',
+      message: `确定取消订单 \`${order.id}\` 吗？\n取消后这笔订单不会继续占用购买通道，你可以重新选择套餐并创建新订单。`,
+      confirmText: '取消订单',
+      cancelText: '先保留',
+      tone: 'danger',
+      action: () => void cancelOrderNow(order),
+    })
   }
 
   const tabs: Array<{ id: BillingTab; label: string }> = [
@@ -218,6 +272,20 @@ export default function PlatformBillingModal({ baseUrl, onClose }: PlatformBilli
 
   const renderPlanButton = (plan: PlatformPlanResponse) => {
     const busy = workingPlanId === plan.id
+    if (pendingOrder) {
+      return (
+        <button
+          type="button"
+          onClick={() => {
+            setTab('orders')
+            setCheckoutNotice('当前已有待支付订单，请先完成支付或取消订单后再购买新套餐')
+          }}
+          className="mt-4 inline-flex w-full items-center justify-center rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm font-semibold text-amber-800 transition hover:bg-amber-100 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-100 dark:hover:bg-amber-500/15"
+        >
+          先处理待支付订单
+        </button>
+      )
+    }
     if (user?.mode === 'development') {
       return (
         <button
@@ -271,7 +339,7 @@ export default function PlatformBillingModal({ baseUrl, onClose }: PlatformBilli
           <div className="mt-4 rounded-2xl border border-white/80 bg-white p-4 dark:border-white/[0.08] dark:bg-white/[0.04]">
             <div className="text-xs text-gray-500 dark:text-gray-400">当前余额</div>
             <div className="mt-1 text-4xl font-semibold text-gray-950 dark:text-white">{balance?.availableCredits ?? 0}</div>
-            <div className="text-xs text-gray-500 dark:text-gray-400">credits</div>
+            <div className="text-xs text-gray-500 dark:text-gray-400">余额</div>
             <div className="mt-3 flex flex-wrap gap-2">
               <StatusPill tone={user?.mode === 'development' ? 'amber' : 'blue'}>{user?.mode === 'development' ? '开发模式' : '真实账号'}</StatusPill>
               {adminStats ? <StatusPill tone="green">管理员</StatusPill> : null}
@@ -343,7 +411,7 @@ export default function PlatformBillingModal({ baseUrl, onClose }: PlatformBilli
 
           {checkoutNotice && (
             <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-100">
-              {checkoutNotice}。订单已创建，接入真实支付后会跳转到收银台。
+              {checkoutNotice}
             </div>
           )}
 
@@ -359,10 +427,10 @@ export default function PlatformBillingModal({ baseUrl, onClose }: PlatformBilli
                     <div className="rounded-2xl border border-blue-100 bg-blue-50/80 p-4 dark:border-blue-500/20 dark:bg-blue-500/10">
                       <div className="text-xs font-medium text-blue-600 dark:text-blue-300">可用余额</div>
                       <div className="mt-2 text-3xl font-semibold text-blue-700 dark:text-blue-100">{balance?.availableCredits ?? 0}</div>
-                      <div className="mt-1 text-xs text-blue-600/70 dark:text-blue-200/70">credits</div>
+                      <div className="mt-1 text-xs text-blue-600/70 dark:text-blue-200/70">余额</div>
                     </div>
                     <div className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-white/[0.08] dark:bg-white/[0.03]">
-                      <div className="text-xs text-gray-500 dark:text-gray-400">已购积分</div>
+                      <div className="text-xs text-gray-500 dark:text-gray-400">已购次数</div>
                       <div className="mt-2 text-2xl font-semibold text-gray-950 dark:text-white">{planStats.totalPurchasedCredits}</div>
                       <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">累计充值</div>
                     </div>
@@ -389,7 +457,7 @@ export default function PlatformBillingModal({ baseUrl, onClose }: PlatformBilli
                           <div className="flex items-start justify-between gap-3">
                             <div>
                               <div className="text-base font-semibold text-gray-950 dark:text-white">{planStats.recommended.name}</div>
-                              <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">{planStats.recommended.credits} credits · {getUnitPrice(planStats.recommended)}</div>
+                              <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">{planStats.recommended.credits} 次 · {getUnitPrice(planStats.recommended)}</div>
                             </div>
                             <div className="text-right text-lg font-semibold text-gray-950 dark:text-white">{formatPlanPrice(planStats.recommended)}</div>
                           </div>
@@ -410,7 +478,7 @@ export default function PlatformBillingModal({ baseUrl, onClose }: PlatformBilli
                           <div className="flex items-center justify-between gap-3">
                             <div className="min-w-0">
                               <div className="truncate text-sm font-medium text-gray-900 dark:text-white">{job.request?.prompt || job.id}</div>
-                              <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">{formatDateTime(job.createdAt)} · {job.costCredits} credits</div>
+                              <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">{formatDateTime(job.createdAt)} · {job.costCredits} 余额</div>
                             </div>
                             <StatusPill tone={job.status === 'succeeded' ? 'green' : job.status === 'failed' ? 'red' : 'amber'}>{formatJobStatus(job.status)}</StatusPill>
                           </div>
@@ -422,7 +490,13 @@ export default function PlatformBillingModal({ baseUrl, onClose }: PlatformBilli
               )}
 
               {tab === 'plans' && (
-                <section className="grid gap-4 md:grid-cols-3">
+                <section className="space-y-4">
+                  {pendingOrder && (
+                    <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-100">
+                      当前有一笔待支付订单，系统已暂停创建新订单。请在订单记录中完成支付或取消后再购买其他套餐。
+                    </div>
+                  )}
+                  <div className="grid gap-4 md:grid-cols-3">
                   {plans.length ? plans.map((plan) => (
                     <div key={plan.id} className={`rounded-2xl border bg-white p-5 dark:bg-white/[0.03] ${plan.id === planStats.recommended?.id ? 'border-blue-300 shadow-sm dark:border-blue-500/30' : 'border-gray-200 dark:border-white/[0.08]'}`}>
                       <div className="flex items-start justify-between gap-2">
@@ -433,7 +507,7 @@ export default function PlatformBillingModal({ baseUrl, onClose }: PlatformBilli
                         {plan.id === planStats.recommended?.id ? <StatusPill tone="blue">推荐</StatusPill> : null}
                       </div>
                       <div className="mt-5 text-4xl font-semibold text-gray-950 dark:text-white">{plan.credits}</div>
-                      <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">credits</div>
+                      <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">次</div>
                       <div className="mt-4 rounded-2xl bg-gray-50 p-3 dark:bg-white/[0.04]">
                         <div className="text-lg font-semibold text-gray-950 dark:text-white">{formatPlanPrice(plan)}</div>
                         <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">{getUnitPrice(plan)}</div>
@@ -441,11 +515,19 @@ export default function PlatformBillingModal({ baseUrl, onClose }: PlatformBilli
                       {renderPlanButton(plan)}
                     </div>
                   )) : <EmptyState title="暂无可售套餐" body="后端暂未返回启用状态的套餐。" />}
+                  </div>
                 </section>
               )}
 
               {tab === 'orders' && (
-                <section className="overflow-hidden rounded-2xl border border-gray-200 dark:border-white/[0.08]">
+                <section className="space-y-4">
+                  {pendingOrder && (
+                    <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-100">
+                      <div className="font-semibold">有待支付订单正在占用购买通道</div>
+                      <div className="mt-1">为避免重复下单和数据库堆积，新订单创建已被阻止。请先完成支付，或取消这笔订单。</div>
+                    </div>
+                  )}
+                <div className="overflow-hidden rounded-2xl border border-gray-200 dark:border-white/[0.08]">
                   {orders.length ? orders.map((order) => (
                     <div key={order.id} className="grid gap-3 border-b border-gray-100 p-4 last:border-b-0 dark:border-white/[0.06] sm:grid-cols-[1fr_auto] sm:items-center">
                       <div className="min-w-0">
@@ -457,10 +539,21 @@ export default function PlatformBillingModal({ baseUrl, onClose }: PlatformBilli
                       </div>
                       <div className="text-left sm:text-right">
                         <div className="text-sm font-semibold text-gray-950 dark:text-white">{formatPrice(order.amountCents, order.currency)}</div>
-                        <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">{order.credits} credits</div>
+                        <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">{order.credits} 次</div>
+                        {order.status === 'pending' && (
+                          <button
+                            type="button"
+                            disabled={cancellingOrderId === order.id}
+                            onClick={() => void handleCancelOrder(order)}
+                            className="mt-3 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-700 transition hover:bg-red-50 disabled:opacity-60 dark:border-red-500/20 dark:text-red-200 dark:hover:bg-red-500/10"
+                          >
+                            {cancellingOrderId === order.id ? '取消中...' : '取消订单'}
+                          </button>
+                        )}
                       </div>
                     </div>
                   )) : <EmptyState title="暂无订单" body="购买套餐后，订单会保存在这里。" />}
+                </div>
                 </section>
               )}
 
@@ -477,7 +570,7 @@ export default function PlatformBillingModal({ baseUrl, onClose }: PlatformBilli
                         {job.errorMessage && <div className="mt-2 text-xs text-red-600 dark:text-red-300">{job.errorMessage}</div>}
                       </div>
                       <div className="text-left sm:text-right">
-                        <div className="text-sm font-semibold text-gray-950 dark:text-white">{job.costCredits} credits</div>
+                        <div className="text-sm font-semibold text-gray-950 dark:text-white">{job.costCredits} 余额</div>
                         <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">{job.images.length} 张图</div>
                       </div>
                     </div>
@@ -498,7 +591,7 @@ export default function PlatformBillingModal({ baseUrl, onClose }: PlatformBilli
                         <div className="text-xs font-normal text-gray-500 dark:text-gray-400">余额 {entry.balanceAfter}</div>
                       </div>
                     </div>
-                  )) : <EmptyState title="暂无流水" body="充值、扣费和退款会记录为积分流水。" />}
+                  )) : <EmptyState title="暂无流水" body="充值、扣费和退款会记录为余额流水。" />}
                 </section>
               )}
 
@@ -524,7 +617,7 @@ export default function PlatformBillingModal({ baseUrl, onClose }: PlatformBilli
                   </div>
                   <div className="grid gap-4 lg:grid-cols-2">
                     <div className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-white/[0.08] dark:bg-white/[0.03]">
-                      <h5 className="text-sm font-semibold text-gray-950 dark:text-white">积分流向</h5>
+                      <h5 className="text-sm font-semibold text-gray-950 dark:text-white">余额流向</h5>
                       <div className="mt-3 space-y-2 text-sm">
                         <div className="flex justify-between"><span className="text-gray-500 dark:text-gray-400">已发放</span><span className="font-semibold text-emerald-600">{adminStats.billing.creditsIssued}</span></div>
                         <div className="flex justify-between"><span className="text-gray-500 dark:text-gray-400">已扣减</span><span className="font-semibold text-gray-950 dark:text-white">{adminStats.billing.creditsDebited}</span></div>
@@ -551,3 +644,4 @@ export default function PlatformBillingModal({ baseUrl, onClose }: PlatformBilli
     document.body,
   )
 }
+

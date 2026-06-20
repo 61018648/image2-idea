@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 
 const REPO = 'CookSleep/gpt_image_playground'
 const API_URL = `https://api.github.com/repos/${REPO}/releases/latest`
+const VERSION_CHECK_ENABLED = import.meta.env.VITE_ENABLE_VERSION_CHECK === 'true'
 
 function compareVersions(a: string, b: string) {
   const aParts = a.split('.').map((part) => Number.parseInt(part, 10) || 0)
@@ -34,6 +35,7 @@ export function useVersionCheck() {
   )
 
   useEffect(() => {
+    if (!VERSION_CHECK_ENABLED) return
     let cancelled = false
 
     fetch(API_URL, { headers: { Accept: 'application/vnd.github.v3+json' } })

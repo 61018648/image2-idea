@@ -35,6 +35,8 @@ export interface Plan {
   priceCents: number
   currency: 'USD' | 'CNY'
   enabled: boolean
+  recommended: boolean
+  description?: string
 }
 
 export interface UserPlanPackage {
@@ -64,7 +66,10 @@ export interface Order {
   userId: string
   planId: string
   status: OrderStatus
+  originalAmountCents: number
   amountCents: number
+  balanceApplied: number
+  balanceAppliedCents: number
   currency: Plan['currency']
   credits: number
   provider: PaymentProvider
@@ -102,8 +107,17 @@ export interface BillingStore {
   upsertPlan(plan: Plan): Promise<Plan>
   listUserPlanPackages(userId: string): Promise<UserPlanPackage[]>
   listOrders(userId: string, limit?: number): Promise<Order[]>
+  getOrder(userId: string, orderId: string): Promise<Order | null>
+  getOrderById(orderId: string): Promise<Order | null>
+  getPendingOrder(userId: string): Promise<Order | null>
+  listPaymentEvents(limit?: number): Promise<PaymentEvent[]>
   getAdminStats(): Promise<BillingAdminStats>
-  createOrder(userId: string, planId: string, provider?: PaymentProvider): Promise<Order>
+  createOrder(userId: string, planId: string, provider?: PaymentProvider, options?: {
+    useBalance?: boolean
+    balanceUnitCents?: number
+    autoPayCovered?: boolean
+  }): Promise<Order>
+  cancelOrder(userId: string, orderId: string): Promise<Order>
   markOrderPaid(input: {
     orderId: string
     provider: PaymentProvider

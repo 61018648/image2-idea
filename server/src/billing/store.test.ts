@@ -6,7 +6,7 @@ describe('billing store', () => {
     resetMemoryBillingStoreForTest()
   })
 
-  it('creates orders and grants credits once for an idempotent payment event', async () => {
+  it('creates orders and grants plan packages once for an idempotent payment event', async () => {
     const store = resetMemoryBillingStoreForTest()
     const order = await store.createOrder('user-a', 'dev-small', 'dev')
 
@@ -27,8 +27,18 @@ describe('billing store', () => {
 
     expect(first.duplicate).toBe(false)
     expect(second.duplicate).toBe(true)
-    expect((await store.getBalance('user-a')).availableCredits).toBe(100)
-    expect(await store.listLedger('user-a')).toHaveLength(1)
+    expect((await store.getBalance('user-a')).availableCredits).toBe(0)
+    expect(await store.listLedger('user-a')).toHaveLength(0)
+    expect(await store.listUserPlanPackages('user-a')).toMatchObject([
+      {
+        userId: 'user-a',
+        planId: 'dev-small',
+        orderId: order.id,
+        totalUses: 100,
+        remainingUses: 100,
+        status: 'active',
+      },
+    ])
   })
 
   it('rejects provider and amount mismatches before granting credits', async () => {
@@ -54,7 +64,7 @@ describe('billing store', () => {
     expect((await store.getBalance('user-a')).availableCredits).toBe(0)
   })
 
-  it('prevents negative balances and supports refund idempotency', async () => {
+  it('prevents negative credits and spends plan packages before credit balance', async () => {
     const store = resetMemoryBillingStoreForTest()
     await expect(store.debitCredits({
       userId: 'user-a',
@@ -70,12 +80,66 @@ describe('billing store', () => {
       paidAmountCents: order.amountCents,
       raw: {},
     })
-    await store.debitCredits({ userId: 'user-a', amount: -3, sourceId: 'job-a' })
-    const firstRefund = await store.refundCredits({ userId: 'user-a', amount: 3, sourceId: 'job-a' })
-    const duplicateRefund = await store.refundCredits({ userId: 'user-a', amount: 3, sourceId: 'job-a' })
+    const debit = await store.debitGeneration({ userId: 'user-a', creditAmount: 3, packageUses: 3, sourceId: 'job-a' })
 
-    expect(firstRefund.duplicate).toBe(false)
-    expect(duplicateRefund.duplicate).toBe(true)
-    expect((await store.getBalance('user-a')).availableCredits).toBe(100)
+    expect(debit.mode).toBe('package')
+    expect(debit.chargedPackageUses).toBe(3)
+    expect((await store.getBalance('user-a')).availableCredits).toBe(0)
+    expect(await store.listUserPlanPackages('user-a')).toMatchObject([
+      {
+        totalUses: 100,
+        remainingUses: 97,
+        status: 'active',
+      },
+    ])
+  })
+
+  it('applies balance to plan orders and refunds it when a pending order is cancelled', async () => {
+    const store = resetMemoryBillingStoreForTest()
+    await store.adjustCredits({ userId: 'user-a', amount: 3, description: 'seed balance' })
+
+    const order = await store.createOrder('user-a', 'dev-small', 'epay', { balanceUnitCents: 100 })
+
+    expect(order).toMatchObject({
+      status: 'pending',
+      originalAmountCents: 500,
+      amountCents: 200,
+      balanceApplied: 3,
+      balanceAppliedCents: 300,
+    })
+    expect((await store.getBalance('user-a')).availableCredits).toBe(0)
+
+    const cancelled = await store.cancelOrder('user-a', order.id)
+
+    expect(cancelled.status).toBe('cancelled')
+    expect((await store.getBalance('user-a')).availableCredits).toBe(3)
+    expect((await store.listLedger('user-a')).map((entry) => entry.amount)).toEqual([3, -3, 3])
+  })
+
+  it('marks fully balance-covered plan orders paid and grants the package immediately', async () => {
+    const store = resetMemoryBillingStoreForTest()
+    await store.adjustCredits({ userId: 'user-a', amount: 10, description: 'seed balance' })
+
+    const order = await store.createOrder('user-a', 'dev-small', 'epay', { balanceUnitCents: 100 })
+
+    expect(order).toMatchObject({
+      status: 'paid',
+      originalAmountCents: 500,
+      amountCents: 0,
+      balanceApplied: 5,
+      balanceAppliedCents: 500,
+    })
+    expect(order.paidAt).toBeTruthy()
+    expect((await store.getBalance('user-a')).availableCredits).toBe(5)
+    expect(await store.listUserPlanPackages('user-a')).toMatchObject([
+      {
+        userId: 'user-a',
+        planId: 'dev-small',
+        orderId: order.id,
+        totalUses: 100,
+        remainingUses: 100,
+        status: 'active',
+      },
+    ])
   })
 })

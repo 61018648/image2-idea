@@ -6,6 +6,7 @@ import type {
   PlatformImageGenerationRequest,
   PlatformListGenerationsResponse,
 } from './platformApiContracts'
+import { toUserFacingErrorMessage } from './userFacingErrors'
 
 const PLATFORM_GENERATIONS_PATH = '/api/platform/generations'
 
@@ -29,7 +30,7 @@ async function requestJson<T>(url: string, init: RequestInit = {}): Promise<T> {
     credentials: 'include',
   })
 
-  if (!response.ok) throw new Error(await getApiErrorMessage(response))
+  if (!response.ok) throw new Error(toUserFacingErrorMessage(await getApiErrorMessage(response)))
   return response.json() as Promise<T>
 }
 

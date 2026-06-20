@@ -2,7 +2,7 @@ import type mysql from 'mysql2/promise'
 import { getBillingStore } from '../billing/store.js'
 import { getGenerationJobStore } from '../generationJobs/store.js'
 import { readImageProviderConfig, readPlatformConfig, updatePlatformConfig, type PlatformConfigPatch } from '../admin/configStore.js'
-import type { Plan } from '../billing/types.js'
+import type { PaymentEvent, Plan } from '../billing/types.js'
 import { createMysqlUser, findMysqlUserById, findMysqlUserByUsername, migrateMysqlUserIdsToNumeric, updateMysqlUserProfile } from '../auth/mysqlAccounts.js'
 import { hashPassword } from '../auth/password.js'
 import { readRequiredSession } from '../auth/session.js'
@@ -327,7 +327,10 @@ async function listPrismaOrders(limit: number) {
     userDisplayName: order.user.displayName,
     planId: order.planId,
     status: order.status,
+    originalAmountCents: order.originalAmountCents,
     amountCents: order.amountCents,
+    balanceApplied: order.balanceApplied,
+    balanceAppliedCents: order.balanceAppliedCents,
     currency: order.currency,
     credits: order.credits,
     provider: order.provider,
@@ -336,6 +339,26 @@ async function listPrismaOrders(limit: number) {
     createdAt: order.createdAt.toISOString(),
     paidAt: order.paidAt?.toISOString() ?? null,
   }))
+}
+
+function sanitizePaymentEventRaw(raw: unknown) {
+  if (!raw || typeof raw !== 'object') return raw
+  const entries = Object.entries(raw as Record<string, unknown>).map(([key, value]) => {
+    if (/key|secret|sign|token|password/i.test(key)) return [key, '***']
+    return [key, value]
+  })
+  return Object.fromEntries(entries)
+}
+
+function mapPaymentEvent(event: PaymentEvent) {
+  return {
+    id: event.id,
+    provider: event.provider,
+    providerEventId: event.providerEventId,
+    orderId: event.orderId ?? null,
+    processedAt: event.processedAt,
+    raw: sanitizePaymentEventRaw(event.raw),
+  }
 }
 
 async function readSiteConfig() {
@@ -366,6 +389,8 @@ function normalizePlanBody(body: Record<string, unknown>): Plan {
   const priceCents = Number(body.priceCents)
   const currency = body.currency === 'USD' ? 'USD' : 'CNY'
   const enabled = typeof body.enabled === 'boolean' ? body.enabled : true
+  const recommended = typeof body.recommended === 'boolean' ? body.recommended : false
+  const description = typeof body.description === 'string' ? body.description.trim() : ''
   if (!id) throw new Error('Plan ID is required')
   if (!/^[a-zA-Z0-9_-]{2,64}$/.test(id)) throw new Error('Plan ID only supports letters, numbers, - and _')
   if (!name) throw new Error('Plan name is required')
@@ -378,6 +403,8 @@ function normalizePlanBody(body: Record<string, unknown>): Plan {
     priceCents: Math.trunc(priceCents),
     currency,
     enabled,
+    recommended,
+    description: description || undefined,
   }
 }
 
@@ -417,6 +444,37 @@ async function probeUpstreamModels(body: Record<string, unknown>) {
   }
 }
 
+async function confirmOrderPayment(body: Record<string, unknown>) {
+  const orderId = typeof body.orderId === 'string' ? body.orderId.trim() : ''
+  const providerEventId = typeof body.providerEventId === 'string' && body.providerEventId.trim()
+    ? body.providerEventId.trim()
+    : `admin:${orderId}:${Date.now()}`
+  const providerPaymentId = typeof body.providerPaymentId === 'string' && body.providerPaymentId.trim()
+    ? body.providerPaymentId.trim()
+    : providerEventId
+  const paidAmountCents = typeof body.paidAmountCents === 'undefined' ? undefined : Number(body.paidAmountCents)
+  const note = typeof body.note === 'string' ? body.note.trim() : ''
+  if (!orderId) throw new Error('Order ID is required')
+
+  const store = getBillingStore()
+  const order = await store.getOrderById(orderId)
+  if (!order) throw new Error('Order not found')
+  return store.markOrderPaid({
+    orderId,
+    provider: order.provider,
+    providerEventId,
+    providerPaymentId,
+    paidAmountCents: Number.isFinite(paidAmountCents) ? Number(paidAmountCents) : order.amountCents,
+    raw: {
+      source: 'admin_confirm',
+      note,
+      orderId,
+      providerEventId,
+      providerPaymentId,
+    },
+  })
+}
+
 export async function handleAdminRequest(request: Request): Promise<Response> {
   try {
     await assertAdmin(request)
@@ -442,6 +500,17 @@ export async function handleAdminRequest(request: Request): Promise<Response> {
       const body = await request.json().catch(() => ({})) as Record<string, unknown>
       if (!useMysqlCompat()) throw new Error('Admin user editing currently requires MySQL mode')
       return jsonResponse(await updateAdminMysqlUser(body))
+    }
+
+    if (url.pathname === '/api/platform/admin/orders/confirm-payment' && request.method === 'POST') {
+      const body = await request.json().catch(() => ({})) as Record<string, unknown>
+      const result = await confirmOrderPayment(body)
+      return jsonResponse({ order: result.order, duplicate: result.duplicate })
+    }
+
+    if (url.pathname === '/api/platform/admin/payment-events') {
+      const events = await getBillingStore().listPaymentEvents(limit)
+      return jsonResponse({ events: events.map(mapPaymentEvent) })
     }
 
     if (url.pathname === '/api/platform/admin/orders') {

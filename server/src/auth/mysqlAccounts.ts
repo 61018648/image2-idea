@@ -45,6 +45,15 @@ export async function findMysqlUserByUsername(username: string): Promise<MysqlUs
   return rows[0] ? mapUser(rows[0]) : null
 }
 
+export async function findMysqlUserByLogin(login: string): Promise<MysqlUserAccount | null> {
+  await ensureMysqlUserProfileColumns()
+  const rows = await mysqlQuery<mysql.RowDataPacket[]>(
+    `SELECT * FROM user_accounts WHERE username=? OR email=? OR display_name=? LIMIT 1`,
+    [login, login, login],
+  )
+  return rows[0] ? mapUser(rows[0]) : null
+}
+
 export async function findMysqlUserById(id: string): Promise<MysqlUserAccount | null> {
   await ensureMysqlUserProfileColumns()
   const rows = await mysqlQuery<mysql.RowDataPacket[]>(`SELECT * FROM user_accounts WHERE id=? LIMIT 1`, [id])

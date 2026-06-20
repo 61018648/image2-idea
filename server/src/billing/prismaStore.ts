@@ -46,7 +46,7 @@ function mapBalance(balance: { userId: string; availableCredits: number; updated
   }
 }
 
-function mapPlan(plan: { id: string; name: string; credits: number; priceCents: number; currency: string; enabled: boolean }): Plan {
+function mapPlan(plan: { id: string; name: string; credits: number; priceCents: number; currency: string; enabled: boolean; recommended?: boolean | null; description?: string | null }): Plan {
   return {
     id: plan.id,
     name: plan.name,
@@ -54,16 +54,22 @@ function mapPlan(plan: { id: string; name: string; credits: number; priceCents: 
     priceCents: plan.priceCents,
     currency: toCurrency(plan.currency),
     enabled: plan.enabled,
+    recommended: Boolean(plan.recommended),
+    ...(plan.description ? { description: plan.description } : {}),
   }
 }
 
-function mapOrder(order: { id: string; userId: string; planId: string; status: string; amountCents: number; currency: string; credits: number; provider: string; providerOrderId: string | null; providerPaymentId: string | null; createdAt: Date; paidAt: Date | null }): Order {
+function mapOrder(order: { id: string; userId: string; planId: string; status: string; amountCents: number; currency: string; credits: number; provider: string; providerOrderId: string | null; providerPaymentId: string | null; createdAt: Date; paidAt: Date | null; originalAmountCents?: number | null; balanceApplied?: number | null; balanceAppliedCents?: number | null }): Order {
+  const balanceAppliedCents = order.balanceAppliedCents ?? 0
   return {
     id: order.id,
     userId: order.userId,
     planId: order.planId,
     status: order.status === 'paid' || order.status === 'cancelled' || order.status === 'expired' ? order.status : 'pending',
+    originalAmountCents: order.originalAmountCents ?? order.amountCents + balanceAppliedCents,
     amountCents: order.amountCents,
+    balanceApplied: order.balanceApplied ?? 0,
+    balanceAppliedCents,
     currency: toCurrency(order.currency),
     credits: order.credits,
     provider: toProvider(order.provider),
@@ -115,6 +121,8 @@ async function ensureDefaultPlans(tx: Tx) {
         priceCents: plan.priceCents,
         currency: plan.currency,
         enabled: plan.enabled,
+        recommended: plan.recommended,
+        description: plan.description,
       },
       create: {
         id: plan.id,
@@ -123,6 +131,8 @@ async function ensureDefaultPlans(tx: Tx) {
         priceCents: plan.priceCents,
         currency: plan.currency,
         enabled: plan.enabled,
+        recommended: plan.recommended,
+        description: plan.description,
       },
     })
   }
@@ -173,6 +183,28 @@ async function addLedgerEntry(tx: Tx, input: {
   return entry
 }
 
+function clampBalanceUnitCents(value: unknown): number {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return 100
+  return Math.max(1, Math.min(100_000, Math.trunc(numeric)))
+}
+
+async function grantPackageForOrder(tx: Tx, order: Order) {
+  await tx.userPlanPackage.upsert({
+    where: { orderId: order.id },
+    update: {},
+    create: {
+      id: genId('pkg'),
+      userId: order.userId,
+      planId: order.planId,
+      orderId: order.id,
+      totalUses: order.credits,
+      remainingUses: order.credits,
+      status: 'active',
+    },
+  })
+}
+
 export async function createPrismaBillingStore(prisma: PrismaClient): Promise<BillingStore> {
   await prisma.$transaction(async (tx) => {
     await ensureDefaultPlans(tx)
@@ -215,6 +247,8 @@ export async function createPrismaBillingStore(prisma: PrismaClient): Promise<Bi
         priceCents: Math.max(0, Math.trunc(plan.priceCents)),
         currency: plan.currency === 'USD' ? 'USD' : 'CNY',
         enabled: Boolean(plan.enabled),
+        recommended: Boolean(plan.recommended),
+        ...(plan.description ? { description: plan.description.trim() } : {}),
       }
       if (!normalized.id) throw new Error('Plan ID is required')
       if (!normalized.name) throw new Error('Plan name is required')
@@ -226,6 +260,8 @@ export async function createPrismaBillingStore(prisma: PrismaClient): Promise<Bi
           priceCents: normalized.priceCents,
           currency: normalized.currency,
           enabled: normalized.enabled,
+          recommended: normalized.recommended,
+          description: normalized.description,
         },
         create: normalized,
       })
@@ -250,13 +286,41 @@ export async function createPrismaBillingStore(prisma: PrismaClient): Promise<Bi
       return orders.map(mapOrder)
     },
 
+    async getOrder(userId, orderId) {
+      const order = await prisma.order.findFirst({ where: { id: orderId, userId } })
+      return order ? mapOrder(order) : null
+    },
+
+    async getOrderById(orderId) {
+      const order = await prisma.order.findUnique({ where: { id: orderId } })
+      return order ? mapOrder(order) : null
+    },
+
+    async getPendingOrder(userId) {
+      const order = await prisma.order.findFirst({ where: { userId, status: 'pending' }, orderBy: { createdAt: 'desc' } })
+      return order ? mapOrder(order) : null
+    },
+
+    async listPaymentEvents(limit = 50) {
+      const take = Math.max(1, Math.min(200, Math.trunc(limit || 50)))
+      const events = await prisma.paymentEvent.findMany({ orderBy: { processedAt: 'desc' }, take })
+      return events.map((event) => ({
+        id: event.id,
+        provider: toProvider(event.provider),
+        providerEventId: event.providerEventId,
+        orderId: event.orderId ?? undefined,
+        processedAt: toIso(event.processedAt),
+        raw: event.raw,
+      }))
+    },
+
     async getAdminStats() {
       const [users, orders, paidOrders, pendingOrders, paidAmount, issued, debited, balances] = await Promise.all([
         prisma.userAccount.count(),
         prisma.order.count(),
         prisma.order.count({ where: { status: 'paid' } }),
         prisma.order.count({ where: { status: 'pending' } }),
-        prisma.order.aggregate({ where: { status: 'paid' }, _sum: { amountCents: true } }),
+        prisma.order.aggregate({ where: { status: 'paid' }, _sum: { originalAmountCents: true } }),
         prisma.creditLedger.aggregate({ where: { amount: { gt: 0 } }, _sum: { amount: true } }),
         prisma.creditLedger.aggregate({ where: { amount: { lt: 0 } }, _sum: { amount: true } }),
         prisma.balance.aggregate({ _sum: { availableCredits: true } }),
@@ -266,31 +330,80 @@ export async function createPrismaBillingStore(prisma: PrismaClient): Promise<Bi
         orders,
         paidOrders,
         pendingOrders,
-        revenueCents: paidAmount._sum.amountCents ?? 0,
+        revenueCents: paidAmount._sum.originalAmountCents ?? 0,
         creditsIssued: issued._sum.amount ?? 0,
         creditsDebited: Math.abs(debited._sum.amount ?? 0),
         availableCredits: balances._sum.availableCredits ?? 0,
       }
     },
 
-    async createOrder(userId, planId, provider = 'dev') {
+    async createOrder(userId, planId, provider = 'dev', options = {}) {
       return prisma.$transaction(async (tx) => {
         await ensureAccount(tx, userId)
+        const pendingOrder = await tx.order.findFirst({ where: { userId, status: 'pending' }, orderBy: { createdAt: 'desc' } })
+        if (pendingOrder) throw new Error(`Pending order exists: ${pendingOrder.id}`)
         const plan = await tx.plan.findFirst({ where: { id: planId, enabled: true } })
         if (!plan) throw new Error('Plan not found')
+        const balance = await tx.balance.findUniqueOrThrow({ where: { userId } })
+        const balanceUnitCents = clampBalanceUnitCents(options.balanceUnitCents)
+        const maxBalanceUnitsByAmount = Math.floor(plan.priceCents / balanceUnitCents)
+        const balanceApplied = options.useBalance === false ? 0 : Math.max(0, Math.min(balance.availableCredits, maxBalanceUnitsByAmount))
+        const balanceAppliedCents = balanceApplied * balanceUnitCents
+        const amountCents = Math.max(0, plan.priceCents - balanceAppliedCents)
+        const paidByBalance = amountCents === 0 && options.autoPayCovered !== false
         const order = await tx.order.create({
           data: {
             id: genOrderId(),
             userId,
             planId,
-            status: 'pending',
-            amountCents: plan.priceCents,
+            status: paidByBalance ? 'paid' : 'pending',
+            originalAmountCents: plan.priceCents,
+            amountCents,
+            balanceApplied,
+            balanceAppliedCents,
             currency: plan.currency,
             credits: plan.credits,
             provider,
+            paidAt: paidByBalance ? now() : undefined,
           },
         })
-        return mapOrder(order)
+        const mappedOrder = mapOrder(order)
+        if (balanceApplied > 0) {
+          await addLedgerEntry(tx, {
+            userId,
+            type: 'debit',
+            amount: -balanceApplied,
+            source: 'order',
+            sourceId: `order-balance:${order.id}`,
+            description: `余额抵扣套餐订单 ${order.id}`,
+          })
+        }
+        if (paidByBalance) await grantPackageForOrder(tx, mappedOrder)
+        return mappedOrder
+      })
+    },
+
+    async cancelOrder(userId, orderId) {
+      return prisma.$transaction(async (tx) => {
+        const order = await tx.order.findFirst({ where: { id: orderId, userId } })
+        if (!order) throw new Error('Order not found')
+        if (order.status !== 'pending') throw new Error('Only pending orders can be cancelled')
+        const updatedOrder = await tx.order.update({ where: { id: order.id }, data: { status: 'cancelled' } })
+        if ((order.balanceApplied ?? 0) > 0) {
+          const sourceId = `refund:order-balance:${order.id}`
+          const existing = await tx.creditLedger.findUnique({ where: { sourceId } })
+          if (!existing) {
+            await addLedgerEntry(tx, {
+              userId: order.userId,
+              type: 'refund',
+              amount: order.balanceApplied,
+              source: 'order',
+              sourceId,
+              description: `取消订单退回余额 ${order.id}`,
+            })
+          }
+        }
+        return mapOrder(updatedOrder)
       })
     },
 
@@ -334,19 +447,7 @@ export async function createPrismaBillingStore(prisma: PrismaClient): Promise<Bi
             raw: input.raw as Prisma.InputJsonValue,
           },
         })
-        await tx.userPlanPackage.upsert({
-          where: { orderId: order.id },
-          update: {},
-          create: {
-            id: genId('pkg'),
-            userId: order.userId,
-            planId: order.planId,
-            orderId: order.id,
-            totalUses: plan.credits,
-            remainingUses: plan.credits,
-            status: 'active',
-          },
-        })
+        await grantPackageForOrder(tx, mapOrder(updatedOrder))
 
         return { order: mapOrder(updatedOrder), duplicate: false as const }
       })

@@ -6,9 +6,12 @@ import type {
   PlatformAdminCreateUserRequest,
   PlatformAdminCreateUserResponse,
   PlatformAdminGenerationLogsResponse,
+  PlatformAdminConfirmPaymentRequest,
+  PlatformAdminConfirmPaymentResponse,
   PlatformAdminDetectModelsRequest,
   PlatformAdminDetectModelsResponse,
   PlatformAdminOrdersResponse,
+  PlatformAdminPaymentEventsResponse,
   PlatformAdminPlansResponse,
   PlatformAdminSetBalanceRequest,
   PlatformAdminStatsResponse,
@@ -67,6 +70,22 @@ export function updateAdminUser(baseUrl = '', payload: PlatformAdminUpdateUserRe
 
 export function getAdminOrders(baseUrl = '', limit = 100): Promise<PlatformAdminOrdersResponse> {
   return requestJson<PlatformAdminOrdersResponse>(baseUrl, `/admin/orders?limit=${encodeURIComponent(String(limit))}`)
+}
+
+export function confirmAdminOrderPayment(baseUrl = '', payload: PlatformAdminConfirmPaymentRequest): Promise<PlatformAdminConfirmPaymentResponse> {
+  return requestJson<PlatformAdminConfirmPaymentResponse>(baseUrl, '/admin/orders/confirm-payment', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function getAdminPaymentEvents(baseUrl = '', limit = 50): Promise<PlatformAdminPaymentEventsResponse> {
+  return requestJson<PlatformAdminPaymentEventsResponse>(baseUrl, `/admin/payment-events?limit=${encodeURIComponent(String(limit))}`)
+    .catch((error) => {
+      const message = error instanceof Error ? error.message : String(error)
+      if (!/not found|404/i.test(message)) throw error
+      return { events: [] }
+    })
 }
 
 export function getAdminPlans(baseUrl = ''): Promise<PlatformAdminPlansResponse> {

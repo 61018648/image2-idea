@@ -2,6 +2,7 @@ import type { ApiProfile } from '../types'
 import { type CallApiOptions, type CallApiResult, fetchImageUrlAsDataUrl, getApiErrorMessage, MIME_MAP, normalizeBase64Image } from './imageApiShared'
 import { buildPlatformApiUrl, createPlatformGeneration, getPlatformGeneration } from './platformGenerationApi'
 import type { PlatformGenerationJobResponse, PlatformImageGenerationRequest, PlatformImageGenerationResponse } from './platformApiContracts'
+import { toUserFacingGenerationError } from './userFacingErrors'
 
 const PLATFORM_IMAGE_GENERATION_PATH = '/api/platform/images/generations'
 const PLATFORM_GENERATION_POLL_INTERVAL_MS = 1500
@@ -9,7 +10,7 @@ const PLATFORM_GENERATION_POLL_TIMEOUT_MS = 180000
 
 function normalizePlatformImages(response: PlatformImageGenerationResponse, fallbackMime: string): CallApiResult {
   if (!Array.isArray(response.images) || response.images.length === 0) {
-    throw new Error('平台接口未返回图片数据')
+    throw new Error('生成失败，请稍后重试或联系管理员')
   }
 
   return {
@@ -36,10 +37,10 @@ function resolvePlatformAssetUrl(profile: ApiProfile, value: string): string {
 
 async function normalizePlatformJob(profile: ApiProfile, job: PlatformGenerationJobResponse, fallbackMime: string, creditsQuoted?: number, creditsCharged?: number): Promise<CallApiResult> {
   if (!Array.isArray(job.images) || job.images.length === 0) {
-    throw new Error('平台任务未返回图片数据')
+    throw new Error('生成失败，请稍后重试或联系管理员')
   }
 
-  const images = [] as string[]
+  const images: string[] = []
   for (const image of job.images) {
     images.push(isAssetUrl(image) ? await fetchImageUrlAsDataUrl(resolvePlatformAssetUrl(profile, image), fallbackMime) : normalizeBase64Image(image, fallbackMime))
   }
@@ -67,11 +68,11 @@ async function pollPlatformGeneration(profile: ApiProfile, jobId: string): Promi
     const { job } = await getPlatformGeneration(profile, jobId)
     if (job.status === 'succeeded') return job
     if (job.status === 'failed' || job.status === 'cancelled') {
-      throw new Error(job.errorMessage || `平台任务${job.status === 'cancelled' ? '已取消' : '失败'}`)
+      throw new Error(job.status === 'cancelled' ? '任务已取消' : toUserFacingGenerationError(job.errorMessage))
     }
   }
 
-  throw new Error('平台任务等待超时，请稍后在云端历史中查看结果')
+  throw new Error('生成任务等待超时，请稍后在生图记录中查看结果')
 }
 
 export async function callPlatformImageApi(opts: CallApiOptions, profile: ApiProfile): Promise<CallApiResult> {
@@ -85,12 +86,12 @@ export async function callPlatformImageApi(opts: CallApiOptions, profile: ApiPro
 
   const created = await createPlatformGeneration(profile, request)
   const jobId = created.job?.id
-  if (!jobId) throw new Error('平台任务创建失败：未返回任务 ID')
+  if (!jobId) throw new Error('生成任务创建失败，请稍后重试或联系管理员')
   if (created.job.status === 'succeeded') {
     return await normalizePlatformJob(profile, created.job, mime, created.creditsQuoted, created.creditsCharged)
   }
   if (created.job.status === 'failed' || created.job.status === 'cancelled') {
-    throw new Error(created.job.errorMessage || '平台任务创建后立即失败')
+    throw new Error(created.job.status === 'cancelled' ? '任务已取消' : toUserFacingGenerationError(created.job.errorMessage))
   }
 
   const completedJob = await pollPlatformGeneration(profile, jobId)
@@ -115,7 +116,7 @@ export async function callPlatformImageApiCompat(opts: CallApiOptions, profile: 
     body: JSON.stringify(request),
   })
 
-  if (!response.ok) throw new Error(await getApiErrorMessage(response))
+  if (!response.ok) throw new Error(toUserFacingGenerationError(await getApiErrorMessage(response)))
 
   const payload = await response.json() as PlatformImageGenerationResponse
   const mime = MIME_MAP[opts.params.output_format] || 'image/png'

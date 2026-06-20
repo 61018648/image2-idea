@@ -1,4 +1,5 @@
 import { getApiErrorMessage } from './imageApiShared'
+import { toUserFacingErrorMessage } from './userFacingErrors'
 import type {
   PlatformAdminStatsResponse,
   PlatformBalanceResponse,
@@ -8,7 +9,9 @@ import type {
   PlatformCreateOrderResponse,
   PlatformLedgerResponse,
   PlatformMeResponse,
+  PlatformOrderDetailResponse,
   PlatformOrdersResponse,
+  PlatformPublicConfigResponse,
   PlatformUserPlanPackagesResponse,
   PlatformPlansResponse,
   PlatformUpdateProfileRequest,
@@ -33,7 +36,21 @@ async function requestJson<T>(baseUrl: string, path: string, init: RequestInit =
     credentials: 'include',
     cache: 'no-store',
   })
-  if (!response.ok) throw new Error(await getApiErrorMessage(response))
+  if (!response.ok) {
+    let apiCode = ''
+    let apiOrder: unknown
+    try {
+      const payload = await response.clone().json()
+      apiCode = typeof payload?.error?.code === 'string' ? payload.error.code : ''
+      apiOrder = payload?.error?.order
+    } catch {
+      /* ignore */
+    }
+    const error = new Error(toUserFacingErrorMessage(await getApiErrorMessage(response))) as Error & { code?: string; order?: unknown }
+    if (apiCode) error.code = apiCode
+    if (apiOrder) error.order = apiOrder
+    throw error
+  }
   return response.json() as Promise<T>
 }
 
@@ -64,12 +81,33 @@ export function getPlatformPlans(baseUrl = ''): Promise<PlatformPlansResponse> {
   return requestJson<PlatformPlansResponse>(baseUrl, '/plans')
 }
 
+export function getPlatformPublicConfig(baseUrl = ''): Promise<PlatformPublicConfigResponse> {
+  return requestJson<PlatformPublicConfigResponse>(baseUrl, '/config')
+}
+
 export function getPlatformAdminStats(baseUrl = ''): Promise<PlatformAdminStatsResponse> {
   return requestJson<PlatformAdminStatsResponse>(baseUrl, '/admin/stats')
 }
 
 export function listPlatformOrders(baseUrl = '', limit = 20): Promise<PlatformOrdersResponse> {
   return requestJson<PlatformOrdersResponse>(baseUrl, `/orders?limit=${encodeURIComponent(String(limit))}`)
+}
+
+export function getPlatformOrder(baseUrl = '', orderId: string): Promise<PlatformOrderDetailResponse> {
+  return requestJson<PlatformOrderDetailResponse>(baseUrl, `/orders/${encodeURIComponent(orderId)}`)
+}
+
+export function cancelPlatformOrder(baseUrl = '', orderId: string): Promise<PlatformOrderDetailResponse> {
+  return requestJson<PlatformOrderDetailResponse>(baseUrl, `/orders/${encodeURIComponent(orderId)}/cancel`, {
+    method: 'POST',
+  })
+}
+
+export function resumePlatformCheckout(baseUrl: string, orderId: string, request: Pick<PlatformCreateCheckoutRequest, 'paymentType'> = {}): Promise<PlatformCheckoutResponse> {
+  return requestJson<PlatformCheckoutResponse>(baseUrl, `/orders/${encodeURIComponent(orderId)}/checkout`, {
+    method: 'POST',
+    body: JSON.stringify(request),
+  })
 }
 
 export function createPlatformOrder(baseUrl: string, request: PlatformCreateOrderRequest): Promise<PlatformCreateOrderResponse> {

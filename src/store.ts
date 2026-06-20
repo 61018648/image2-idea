@@ -720,7 +720,7 @@ function mergePersistedState(persistedState: unknown, currentState: AppState): A
     typeof persisted.activeAgentConversationId === 'string' && (!hasPersistedAgentConversations || agentConversations.some((conversation) => conversation.id === persisted.activeAgentConversationId))
       ? persisted.activeAgentConversationId
       : agentConversations[0]?.id ?? null
-  const appMode = persisted.appMode === 'agent' || persisted.appMode === 'auth' || persisted.appMode === 'user-center' || persisted.appMode === 'admin' ? persisted.appMode : 'gallery'
+  const appMode = persisted.appMode === 'home' || persisted.appMode === 'gallery' || persisted.appMode === 'agent' || persisted.appMode === 'auth' || persisted.appMode === 'user-center' || persisted.appMode === 'admin' ? persisted.appMode : 'home'
   const galleryInputDraft = settings.persistInputOnRestart
     ? normalizeAgentInputDraft(persisted.galleryInputDraft ?? {
         prompt: persisted.prompt,
@@ -1146,9 +1146,9 @@ export const useStore = create<AppState>()(
   persist(
     (set, get) => ({
       // Mode
-      appMode: 'gallery',
+      appMode: 'home',
       setAppMode: (appMode) => {
-        if (appMode === 'gallery' || appMode === 'auth' || appMode === 'user-center' || appMode === 'admin') {
+        if (appMode === 'home' || appMode === 'gallery' || appMode === 'auth' || appMode === 'user-center' || appMode === 'plans' || appMode === 'admin') {
           const state = get()
           const agentInputDrafts = saveActiveAgentInputDrafts(state)
           const galleryInputDraft = saveGalleryInputDraft(state)
@@ -2264,6 +2264,12 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
   const existingPlatformProfile = normalizedSettings.profiles.find((profile) => profile.provider === 'platform')
   const platformProfile = existingPlatformProfile ?? createDefaultPlatformProfile()
   let activeProfile = getActiveApiProfile(settings)
+  if (maskDraft && !inputImages.some((img) => img.id === maskDraft.targetImageId)) {
+    useStore.getState().clearMaskDraft()
+    showToast('遮罩主图已不存在，请重新选择遮罩区域', 'error')
+    return
+  }
+
   if (isGallerySubmit) {
     activeProfile = platformProfile
     if (!existingPlatformProfile || normalizedSettings.activeProfileId !== platformProfile.id) {
@@ -2279,7 +2285,9 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
         profiles: nextProfiles,
         activeProfileId: platformProfile.id,
       })
-      window.dispatchEvent(new Event('platform-billing-updated'))
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('platform-billing-updated'))
+      }
     } else {
       requestBaseSettings = normalizedSettings
     }
@@ -2315,7 +2323,9 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
       const message = err instanceof Error ? err.message : String(err)
       if (message !== 'Unauthorized') showToast(message, 'error')
       else showToast('请先登录后再生成图片', 'info')
-      window.history.pushState(null, '', '/auth')
+      if (typeof window !== 'undefined') {
+        window.history.pushState(null, '', '/auth')
+      }
       useStore.getState().setAppMode('auth')
       return
     }
@@ -4306,8 +4316,10 @@ async function executeTask(taskId: string) {
       let errorMessage = err instanceof Error ? err.message : String(err)
       if (/Insufficient credits|insufficient_credits|余额不足/i.test(errorMessage)) {
         useStore.getState().showToast('余额不足，请先充值后再生成图片', 'error')
-        window.history.pushState(null, '', '/user?tab=plans')
-        useStore.getState().setAppMode('user-center')
+        if (typeof window !== 'undefined') {
+          window.history.pushState(null, '', '/plans')
+        }
+        useStore.getState().setAppMode('plans')
       }
       const settings = useStore.getState().settings
       const profile = getTaskApiProfile(settings, latestTask)

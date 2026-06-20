@@ -1,11 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
 import { useVersionCheck } from '../hooks/useVersionCheck'
 import { createDefaultPlatformProfile, getActiveApiProfile } from '../lib/apiProfiles'
+import { getPlatformPublicConfig } from '../lib/platformAccountApi'
 import { getPlatformAuthSession } from '../lib/platformAuthApi'
+import type { PlatformPublicConfigResponse } from '../lib/platformApiContracts'
+import { toUserFacingErrorMessage } from '../lib/userFacingErrors'
 import { useStore } from '../store'
 import { useFavoriteCollectionTitle } from './FavoriteCollections'
 import HistoryModal from './HistoryModal'
 import { EditIcon, HistoryIcon, UserIcon } from './icons'
+
+type NavKey = 'home' | 'gallery' | 'studio' | 'plans'
 
 export default function Header() {
   const appMode = useStore((s) => s.appMode)
@@ -26,7 +31,19 @@ export default function Header() {
   const [hintVisible, setHintVisible] = useState(false)
   const [scrollDirection, setScrollDirection] = useState<'up' | 'down'>('up')
   const [showHistoryModal, setShowHistoryModal] = useState(false)
+  const [publicConfig, setPublicConfig] = useState<PlatformPublicConfigResponse['config'] | null>(null)
+  const [currentPath, setCurrentPath] = useState(() => (typeof window === 'undefined' ? '/' : window.location.pathname))
   const historyButtonRef = useRef<HTMLButtonElement>(null)
+  const siteName = publicConfig?.siteName || 'Image Idea'
+  const activeNav: NavKey | null = currentPath === '/studio'
+    ? 'studio'
+    : appMode === 'plans'
+      ? 'plans'
+    : appMode === 'home'
+      ? 'home'
+      : appMode === 'gallery'
+        ? 'gallery'
+          : null
 
   const getPlatformProfile = () => {
     const existingPlatformProfile = settings.profiles.find((profile) => profile.provider === 'platform')
@@ -43,6 +60,12 @@ export default function Header() {
     window.dispatchEvent(new Event('platform-billing-updated'))
   }
 
+  const navigate = (path: string, mode: Parameters<typeof setAppMode>[0]) => {
+    window.history.pushState(null, '', path)
+    setCurrentPath(path)
+    setAppMode(mode)
+  }
+
   const handleUserCenterClick = async () => {
     const { existingPlatformProfile, platformProfile } = getPlatformProfile()
     if (!existingPlatformProfile || !platformMode) {
@@ -54,20 +77,30 @@ export default function Header() {
 
     try {
       await getPlatformAuthSession(platformProfile.baseUrl)
-      window.history.pushState(null, '', '/user')
-      setAppMode('user-center')
+      navigate('/user', 'user-center')
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      if (message !== 'Unauthorized') showToast(message, 'error')
-      window.history.pushState(null, '', '/auth')
-      setAppMode('auth')
+      if (message !== '请先登录后再继续操作' && message !== 'Unauthorized') {
+        showToast(toUserFacingErrorMessage(error), 'error')
+      }
+      navigate('/auth', 'auth')
     }
   }
 
-  const openGalleryPage = () => {
-    window.history.pushState(null, '', '/gallery')
-    setAppMode('gallery')
-  }
+  const openHomePage = () => navigate('/', 'home')
+  const openGalleryPage = () => navigate('/gallery', 'gallery')
+  const openStudioPage = () => navigate('/studio', 'agent')
+  const openPlansPage = () => navigate('/plans', 'plans')
+
+  useEffect(() => {
+    void getPlatformPublicConfig(activeProfile.baseUrl).then((response) => setPublicConfig(response.config)).catch(() => undefined)
+  }, [activeProfile.baseUrl])
+
+  useEffect(() => {
+    const syncPath = () => setCurrentPath(window.location.pathname)
+    window.addEventListener('popstate', syncPath)
+    return () => window.removeEventListener('popstate', syncPath)
+  }, [])
 
   useEffect(() => {
     if (appMode === 'agent') {
@@ -121,29 +154,46 @@ export default function Header() {
     }
   }, [platformMode, settings.profiles])
 
+  const navItems: Array<{ key: NavKey; label: string; compactLabel: string; onClick: () => void }> = [
+    { key: 'home', label: '首页', compactLabel: '首页', onClick: openHomePage },
+    { key: 'gallery', label: '作品画廊', compactLabel: '作品', onClick: openGalleryPage },
+    { key: 'studio', label: '生图工作台', compactLabel: '生图', onClick: openStudioPage },
+    { key: 'plans', label: '套餐充值', compactLabel: '套餐', onClick: openPlansPage },
+  ]
+
+  const renderNavButton = (item: typeof navItems[number], compact = false) => {
+    const active = activeNav === item.key
+    return (
+      <button
+        key={item.key}
+        type="button"
+        onClick={item.onClick}
+        className={`${compact ? 'rounded-xl px-2 py-2 text-sm' : 'rounded-full px-4 py-2 text-sm'} font-semibold transition-all ${active ? 'bg-gray-950 text-white shadow-sm dark:bg-white dark:text-gray-950' : 'text-gray-500 hover:bg-white hover:text-gray-950 dark:text-gray-300 dark:hover:bg-white/[0.08] dark:hover:text-white'}`}
+      >
+        {compact ? item.compactLabel : item.label}
+      </button>
+    )
+  }
+
   return (
     <>
-      <header data-no-drag-select className={`safe-area-top fixed top-0 left-0 right-0 z-40 border-b border-gray-200/70 bg-white/85 shadow-[0_18px_60px_rgba(15,23,42,0.08)] backdrop-blur-2xl transition-transform duration-300 ease-in-out dark:border-white/[0.08] dark:bg-gray-950/82 ${appMode === 'agent' && !agentMobileHeaderVisible ? '-translate-y-full sm:translate-y-0' : 'translate-y-0'}`}>
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-blue-500/50 to-transparent" />
+      <header data-no-drag-select className={`safe-area-top fixed top-0 left-0 right-0 z-40 border-b border-gray-200/70 bg-[#fbfaf7]/90 shadow-[0_16px_50px_rgba(15,23,42,0.08)] backdrop-blur-2xl transition-transform duration-300 ease-in-out dark:border-white/[0.08] dark:bg-gray-950/88 ${appMode === 'agent' && !agentMobileHeaderVisible ? '-translate-y-full sm:translate-y-0' : 'translate-y-0'}`}>
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-gray-950/20 to-transparent dark:via-white/20" />
         <div className="safe-area-x safe-header-inner relative mx-auto flex max-w-7xl items-center justify-between gap-3">
           <div className="flex min-w-0 flex-1 items-center gap-3 pr-2">
-            <h1 className="relative mr-1 inline-flex min-w-0 items-center gap-3">
-              <a
-                href="#"
-                rel="noopener noreferrer"
-                className="group inline-flex min-w-0 items-center gap-3"
-              >
-                <span className="relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-gradient-to-br from-blue-600 via-indigo-600 to-slate-950 text-sm font-black text-white shadow-lg shadow-blue-500/20">
-                  <span className="absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,rgba(255,255,255,0.45),transparent_36%)]" />
+            <h1 className="relative mr-1 inline-flex min-w-0 items-center">
+              <button type="button" onClick={openHomePage} className="group inline-flex min-w-0 items-center gap-3 text-left">
+                <span className="relative flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-gray-950 text-sm font-black text-white shadow-lg shadow-gray-950/15 dark:bg-white dark:text-gray-950">
+                  <span className="absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,rgba(255,255,255,0.35),transparent_34%)] dark:bg-[radial-gradient(circle_at_30%_20%,rgba(0,0,0,0.18),transparent_34%)]" />
                   <span className="relative">AI</span>
                 </span>
                 <span className="min-w-0">
                   <span className="block truncate text-[17px] font-black tracking-tight text-gray-950 transition-colors group-hover:text-blue-700 dark:text-white dark:group-hover:text-blue-200 sm:text-lg">
-                    {showFavoriteCollectionTitle ? favoriteCollectionTitle : 'GPT Image Playground'}
+                    {showFavoriteCollectionTitle ? favoriteCollectionTitle : siteName}
                   </span>
-                  <span className="hidden text-[11px] font-medium uppercase tracking-[0.22em] text-gray-400 dark:text-gray-500 sm:block">Commercial AI Studio</span>
+                  <span className="hidden text-[11px] font-semibold uppercase tracking-[0.2em] text-gray-400 dark:text-gray-500 sm:block">Image Commerce Studio</span>
                 </span>
-              </a>
+              </button>
               {hasUpdate && latestRelease && (
                 <a
                   href={latestRelease.url}
@@ -159,14 +209,8 @@ export default function Header() {
             </h1>
 
             {appMode === 'agent' && (
-              <div className="relative hidden items-center gap-1 rounded-2xl border border-gray-200 bg-white/70 p-1 shadow-sm dark:border-white/[0.08] dark:bg-white/[0.04] sm:flex">
-                <button
-                  ref={historyButtonRef}
-                  type="button"
-                  onClick={() => setShowHistoryModal((visible) => !visible)}
-                  className="rounded-xl p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-white/[0.06] dark:hover:text-gray-100"
-                  title="历史任务"
-                >
+              <div className="relative hidden items-center gap-1 rounded-full border border-gray-200 bg-white/70 p-1 shadow-sm dark:border-white/[0.08] dark:bg-white/[0.04] sm:flex">
+                <button ref={historyButtonRef} type="button" onClick={() => setShowHistoryModal((visible) => !visible)} className="rounded-full p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-white/[0.06] dark:hover:text-gray-100" title="历史任务">
                   <HistoryIcon className="h-5 w-5" />
                 </button>
                 <button
@@ -175,8 +219,8 @@ export default function Header() {
                     setAppMode('agent')
                     createConversation()
                   }}
-                  className="rounded-xl p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-white/[0.06] dark:hover:text-gray-100"
-                  title="新对话"
+                  className="rounded-full p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-white/[0.06] dark:hover:text-gray-100"
+                  title="新建对话"
                 >
                   <EditIcon className="h-5 w-5" />
                 </button>
@@ -210,32 +254,16 @@ export default function Header() {
             </div>
           )}
 
-          <div className="hidden items-center gap-1 rounded-2xl border border-gray-200 bg-gray-100/80 p-1 shadow-inner dark:border-white/[0.08] dark:bg-white/[0.04] sm:flex">
-            <button
-              type="button"
-              onClick={openGalleryPage}
-              className={`rounded-xl px-4 py-2 text-sm font-semibold transition-all ${appMode === 'gallery' ? 'bg-white text-gray-950 shadow-sm dark:bg-white dark:text-gray-950' : 'text-gray-500 hover:text-gray-900 dark:hover:text-gray-200'}`}
-            >
-              作品画廊
-            </button>
-            <button
-              type="button"
-              onClick={() => setAppMode('agent')}
-              className={`rounded-xl px-4 py-2 text-sm font-semibold transition-all ${appMode === 'agent' ? 'bg-white text-gray-950 shadow-sm dark:bg-white dark:text-gray-950' : 'text-gray-500 hover:text-gray-900 dark:hover:text-gray-200'}`}
-            >
-              Agent 工作台
-            </button>
-          </div>
+          <nav className="hidden items-center gap-1 rounded-full border border-gray-200 bg-gray-100/75 p-1 shadow-inner dark:border-white/[0.08] dark:bg-white/[0.04] sm:flex">
+            {navItems.map((item) => renderNavButton(item))}
+          </nav>
 
-          <div className="hidden items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 dark:border-emerald-400/20 dark:bg-emerald-500/10 dark:text-emerald-200 md:flex">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 shadow-[0_0_0_4px_rgba(16,185,129,0.14)]" />
-            商业版在线
-          </div>
+      
 
           <button
             type="button"
             onClick={() => void handleUserCenterClick()}
-            className={`inline-flex shrink-0 items-center gap-2 rounded-2xl border px-3 py-2 text-sm font-semibold shadow-sm transition-all hover:-translate-y-0.5 ${appMode === 'auth' || appMode === 'user-center' || appMode === 'admin' ? 'border-gray-950 bg-gray-950 text-white dark:border-white dark:bg-white dark:text-gray-950' : 'border-gray-200 bg-white/80 text-gray-700 hover:border-blue-200 hover:text-blue-700 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-300 dark:hover:text-blue-200'}`}
+            className={`inline-flex shrink-0 items-center gap-2 rounded-full border px-3 py-2 text-sm font-semibold shadow-sm transition-all hover:-translate-y-0.5 ${appMode === 'auth' || appMode === 'user-center' || appMode === 'admin' ? 'border-gray-950 bg-gray-950 text-white dark:border-white dark:bg-white dark:text-gray-950' : 'border-gray-200 bg-white/80 text-gray-700 hover:border-blue-200 hover:text-blue-700 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-300 dark:hover:text-blue-200'}`}
             aria-label="用户中心"
             title="用户中心"
           >
@@ -245,28 +273,15 @@ export default function Header() {
         </div>
 
         <div className={`safe-area-x overflow-hidden transition-all duration-300 ease-in-out sm:hidden ${appMode === 'gallery' && scrollDirection === 'down' ? 'max-h-0 pb-0 opacity-0' : 'max-h-16 pb-2 opacity-100'}`}>
-          <div className="mx-2 grid grid-cols-2 gap-1 rounded-2xl border border-gray-200 bg-gray-100/80 p-1 shadow-inner dark:border-white/[0.08] dark:bg-white/[0.04]">
-            <button
-              type="button"
-              onClick={openGalleryPage}
-              className={`rounded-xl px-4 py-2 text-sm font-semibold transition-all ${appMode === 'gallery' ? 'bg-white text-gray-950 shadow-sm dark:bg-white dark:text-gray-950' : 'text-gray-500 hover:text-gray-900 dark:hover:text-gray-200'}`}
-            >
-              作品画廊
-            </button>
-            <button
-              type="button"
-              onClick={() => setAppMode('agent')}
-              className={`rounded-xl px-4 py-2 text-sm font-semibold transition-all ${appMode === 'agent' ? 'bg-white text-gray-950 shadow-sm dark:bg-white dark:text-gray-950' : 'text-gray-500 hover:text-gray-900 dark:hover:text-gray-200'}`}
-            >
-              Agent 工作台
-            </button>
-          </div>
+          <nav className="mx-2 grid grid-cols-4 gap-1 rounded-2xl border border-gray-200 bg-gray-100/80 p-1 shadow-inner dark:border-white/[0.08] dark:bg-white/[0.04]">
+            {navItems.map((item) => renderNavButton(item, true))}
+          </nav>
         </div>
       </header>
 
       <div className={`pointer-events-none fixed left-0 right-0 top-0 z-30 flex justify-center transition-all duration-300 ease-in-out sm:hidden ${appMode === 'agent' && hintVisible && !agentMobileHeaderVisible ? 'translate-y-[env(safe-area-inset-top,0px)] opacity-100' : '-translate-y-full opacity-0'}`}>
         <div className="rounded-b-xl bg-black/60 px-3 py-1.5 text-xs text-white shadow-lg backdrop-blur-sm">
-          下拉显示顶栏
+          下拉显示顶部导航
         </div>
       </div>
 

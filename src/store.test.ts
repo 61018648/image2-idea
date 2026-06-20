@@ -229,14 +229,21 @@ describe('favorite collection deletion', () => {
 
 describe('mask draft lifecycle in store actions', () => {
   beforeEach(() => {
+    const openAIProfile = createDefaultOpenAIProfile({ apiKey: 'test-key', baseUrl: 'https://api.openai.com/v1' })
     useStore.setState({
-      settings: { ...DEFAULT_SETTINGS, apiKey: 'test-key' },
+      settings: normalizeSettings({
+        ...DEFAULT_SETTINGS,
+        apiKey: 'test-key',
+        profiles: [openAIProfile],
+        activeProfileId: openAIProfile.id,
+      }),
       prompt: 'prompt',
       inputImages: [],
       maskDraft: null,
       maskEditorImageId: null,
       params: { ...DEFAULT_PARAMS },
       tasks: [],
+      appMode: 'agent',
       detailTaskId: null,
       lightboxImageId: null,
       lightboxImageList: [],

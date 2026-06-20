@@ -6,8 +6,10 @@ import { mergeImportedSettings } from './lib/apiProfiles'
 import { getCustomProviderConfigUrl, loadCustomProviderSettingsFromUrl } from './lib/customProviderConfigUrl'
 import { useDockerApiUrlMigrationNotice } from './hooks/useDockerApiUrlMigrationNotice'
 import Header from './components/Header'
+import HomePage from './components/HomePage'
 import PlatformAuthPage from './components/PlatformAuthPage'
 import UserCenterPage from './components/UserCenterPage'
+import PlansPage from './components/PlansPage'
 import AdminPage from './components/AdminPage'
 import GalleryPage from './components/GalleryPage'
 import AgentWorkspace from './components/AgentWorkspace'
@@ -71,10 +73,18 @@ export default function App() {
         useStore.getState().setAppMode('admin')
       } else if (pathname === '/user') {
         useStore.getState().setAppMode('user-center')
+      } else if (pathname === '/plans') {
+        useStore.getState().setAppMode('plans')
       } else if (pathname === '/auth' || pathname === '/login' || pathname === '/register') {
         useStore.getState().setAppMode('auth')
-      } else if (pathname === '/gallery' || pathname === '/') {
+      } else if (pathname === '/gallery') {
         useStore.getState().setAppMode('gallery')
+      } else if (pathname === '/studio') {
+        useStore.getState().setAppMode('agent')
+      } else if (pathname === '/agent') {
+        useStore.getState().setAppMode('agent')
+      } else if (pathname === '/') {
+        useStore.getState().setAppMode('home')
       }
     }
 
@@ -97,7 +107,9 @@ export default function App() {
   return (
     <>
       <Header />
-      {appMode === 'agent' ? (
+      {appMode === 'home' ? (
+        <HomePage />
+      ) : appMode === 'agent' ? (
         <AgentWorkspace />
       ) : appMode === 'auth' ? (
         <PlatformAuthPage />
@@ -105,10 +117,12 @@ export default function App() {
         <AdminPage />
       ) : appMode === 'user-center' ? (
         <UserCenterPage />
+      ) : appMode === 'plans' ? (
+        <PlansPage />
       ) : (
         <GalleryPage filterFavorite={filterFavorite} activeFavoriteCollectionId={activeFavoriteCollectionId} />
       )}
-      {appMode !== 'auth' && appMode !== 'user-center' && appMode !== 'admin' && <InputBar />}
+      {(appMode === 'gallery' || appMode === 'agent') && <InputBar />}
       <DetailModal />
       <Lightbox />
       <SettingsModal />

@@ -2,7 +2,7 @@ import { useEffect, useRef, type ReactNode } from 'react'
 import { ALL_FAVORITES_COLLECTION_ID, clearFailedTasks, getTaskFavoriteCollectionIds, useStore, taskMatchesFilterStatus, taskMatchesSearchQuery } from '../store'
 import { useTooltip } from '../hooks/useTooltip'
 import Select from './Select'
-import { ChevronLeftIcon, CollectionManageIcon, FavoriteIcon, TrashIcon } from './icons'
+import { ChevronLeftIcon, CollectionManageIcon, FavoriteIcon, SettingsIcon, TrashIcon } from './icons'
 import ViewportTooltip from './ViewportTooltip'
 
 function SearchActionButton({
@@ -49,6 +49,7 @@ export default function SearchBar() {
   const setSearchQuery = useStore((s) => s.setSearchQuery)
   const filterStatus = useStore((s) => s.filterStatus)
   const setFilterStatus = useStore((s) => s.setFilterStatus)
+  const setShowSettings = useStore((s) => s.setShowSettings)
   const clearSelection = useStore((s) => s.clearSelection)
   const filterFavorite = useStore((s) => s.filterFavorite)
   const setFilterFavorite = useStore((s) => s.setFilterFavorite)
@@ -132,6 +133,13 @@ export default function SearchBar() {
     <div ref={rootRef} data-no-drag-select className="mt-6 mb-4 flex gap-3">
       <div className="flex gap-2 flex-shrink-0 z-20">
         <SearchActionButton
+          tooltip="设置"
+          onClick={() => setShowSettings(true)}
+          className="p-2.5 rounded-xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-900 text-gray-500 hover:bg-gray-50 hover:text-gray-800 dark:hover:bg-white/[0.06] dark:hover:text-gray-200 transition-all"
+        >
+          <SettingsIcon className="w-5 h-5" />
+        </SearchActionButton>
+        <SearchActionButton
           tooltip={favoriteTooltip}
           onClick={handleFavoriteClick}
           className={`p-2.5 rounded-xl border transition-all ${
@@ -178,6 +186,7 @@ export default function SearchBar() {
                 <TrashIcon className="h-[18px] w-[18px]" />
               </button>
             )}
+            
           </>
         )}
       </div>

@@ -18,8 +18,12 @@ export interface PlatformRuntimeConfig {
   epayKeyMasked: string
   epayReturnUrl: string
   epayNotifyUrl: string
+  epayPaymentTypes: EpayPaymentType[]
   creditsPerImage: number
+  balanceUnitCents: number
 }
+
+export type EpayPaymentType = 'alipay' | 'wxpay' | 'qqpay'
 
 export interface PlatformProviderConfig {
   openaiApiKey: string
@@ -43,7 +47,9 @@ export interface PlatformConfigPatch {
   epayKey?: string
   epayReturnUrl?: string
   epayNotifyUrl?: string
+  epayPaymentTypes?: EpayPaymentType[]
   creditsPerImage?: number
+  balanceUnitCents?: number
 }
 
 const DEFAULT_TIMEOUT_MS = 120_000
@@ -75,6 +81,16 @@ function normalizeBoolean(value: unknown, fallback = false): boolean {
   if (value === 'true' || value === '1') return true
   if (value === 'false' || value === '0') return false
   return fallback
+}
+
+export function normalizeEpayPaymentTypes(value: unknown): EpayPaymentType[] {
+  const rawItems = Array.isArray(value)
+    ? value
+    : typeof value === 'string'
+      ? value.split(',')
+      : []
+  const items = rawItems.filter((item): item is EpayPaymentType => item === 'alipay' || item === 'wxpay' || item === 'qqpay')
+  return items.length ? Array.from(new Set(items)) : ['alipay']
 }
 
 async function ensureMysqlSettingsTable() {
@@ -170,7 +186,9 @@ const ALL_KEYS = [
   'epayKey',
   'epayReturnUrl',
   'epayNotifyUrl',
+  'epayPaymentTypes',
   'creditsPerImage',
+  'balanceUnitCents',
 ]
 
 export async function readPlatformConfig(): Promise<PlatformRuntimeConfig> {
@@ -194,7 +212,9 @@ export async function readPlatformConfig(): Promise<PlatformRuntimeConfig> {
     epayKeyMasked: maskSecret(settings.epayKey || env('EPAY_KEY')),
     epayReturnUrl: settings.epayReturnUrl || env('EPAY_RETURN_URL') || '',
     epayNotifyUrl: settings.epayNotifyUrl || env('EPAY_NOTIFY_URL') || '',
+    epayPaymentTypes: normalizeEpayPaymentTypes(settings.epayPaymentTypes || env('EPAY_PAYMENT_TYPES') || 'alipay'),
     creditsPerImage: Math.max(1, Math.trunc(Number(settings.creditsPerImage || env('PLATFORM_CREDITS_PER_IMAGE') || 1) || 1)),
+    balanceUnitCents: Math.max(1, Math.min(100_000, Math.trunc(Number(settings.balanceUnitCents || env('PLATFORM_BALANCE_UNIT_CENTS') || 100) || 100))),
   }
 }
 
@@ -242,11 +262,17 @@ export async function updatePlatformConfig(patch: PlatformConfigPatch): Promise<
   if (typeof patch.epayEnabled === 'boolean') {
     next.epayEnabled = patch.epayEnabled ? 'true' : 'false'
   }
+  if (typeof patch.epayPaymentTypes !== 'undefined') {
+    next.epayPaymentTypes = normalizeEpayPaymentTypes(patch.epayPaymentTypes).join(',')
+  }
   if (typeof patch.epayKey === 'string' && patch.epayKey.trim()) {
     next.epayKey = patch.epayKey.trim()
   }
   if (typeof patch.creditsPerImage !== 'undefined') {
     next.creditsPerImage = String(Math.max(1, Math.trunc(Number(patch.creditsPerImage) || 1)))
+  }
+  if (typeof patch.balanceUnitCents !== 'undefined') {
+    next.balanceUnitCents = String(Math.max(1, Math.min(100_000, Math.trunc(Number(patch.balanceUnitCents) || 100))))
   }
 
   await writeSettings(next)

@@ -88,6 +88,7 @@ export default function PlatformAuthPage() {
             <span className="text-sm font-medium text-gray-700 dark:text-gray-200">邮箱</span>
             <input
               type="text"
+              autoComplete="username"
               required
               minLength={3}
               value={username}
@@ -100,6 +101,7 @@ export default function PlatformAuthPage() {
             <span className="text-sm font-medium text-gray-700 dark:text-gray-200">密码</span>
             <input
               type="password"
+              autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
               required
               minLength={8}
               value={password}

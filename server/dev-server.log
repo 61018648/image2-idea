@@ -1,0 +1,5 @@
+
+> gpt-image-playground-platform-server@0.1.0 dev
+> tsx src/server.ts
+
+Platform server listening on http://127.0.0.1:8788

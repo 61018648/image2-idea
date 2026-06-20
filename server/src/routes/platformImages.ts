@@ -1,4 +1,5 @@
 import { readRequiredSession } from '../auth/session.js'
+import { getAssetStorage } from '../assets/storage.js'
 import { quoteImageCreditsFromConfig } from '../billing/quote.js'
 import { getBillingStore } from '../billing/store.js'
 import { getGenerationJobStore } from '../generationJobs/store.js'
@@ -14,6 +15,21 @@ interface PlatformImageGenerationRequest {
 
 function genJobId(userId: string): string {
   return `img_${userId}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+}
+
+async function saveGeneratedImages(jobId: string, userId: string, images: string[]): Promise<string[]> {
+  const assetStorage = getAssetStorage()
+  const savedUrls: string[] = []
+  for (let index = 0; index < images.length; index += 1) {
+    const asset = await assetStorage.saveImageDataUrl({
+      userId,
+      jobId,
+      dataUrl: images[index],
+      index,
+    })
+    savedUrls.push(asset.url)
+  }
+  return savedUrls
 }
 
 function normalizeRequest(payload: PlatformImageGenerationRequest) {
@@ -84,9 +100,10 @@ export async function handlePlatformImageGeneration(request: Request): Promise<R
       })
       await jobStore.markRunning(platformJobId)
       const result = await generateWithOpenAICompatible(normalized)
+      const assetUrls = await saveGeneratedImages(platformJobId, session.userId, result.images)
       await jobStore.markSucceeded(platformJobId, {
-        images: result.images,
-        rawImageUrls: result.rawImageUrls,
+        images: assetUrls,
+        rawImageUrls: [...(result.rawImageUrls ?? []), ...assetUrls],
         revisedPrompts: result.revisedPrompts,
         actualParams: result.actualParams,
       })
@@ -107,11 +124,11 @@ export async function handlePlatformImageGeneration(request: Request): Promise<R
 
       const message = error instanceof Error ? error.message : String(error)
       const status = message.startsWith('Missing required environment variable') ? 500 : 400
-      return errorResponse(message, status, status === 500 ? 'server_not_configured' : 'generation_failed')
+      return errorResponse('生成失败，请稍后重试或联系管理员', status, status === 500 ? 'server_not_configured' : 'generation_failed')
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     if (message === 'Insufficient credits') return errorResponse('Insufficient credits', 402, 'insufficient_credits')
-    return errorResponse(message, 400, 'billing_failed')
+    return errorResponse('操作失败，请稍后重试或联系管理员', 400, 'billing_failed')
   }
 }

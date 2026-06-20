@@ -45,6 +45,8 @@ model Plan {
   priceCents  Int      @map("price_cents")
   currency    String   @default("USD") @db.VarChar(8)
   enabled     Boolean  @default(true)
+  recommended Boolean  @default(false)
+  description String?  @db.Text
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
@@ -59,7 +61,10 @@ model Order {
   userId            String    @map("user_id") @db.VarChar(128)
   planId            String    @map("plan_id") @db.VarChar(128)
   status            String    @default("pending") @db.VarChar(32)
+  originalAmountCents Int     @default(0) @map("original_amount_cents")
   amountCents       Int       @map("amount_cents")
+  balanceApplied    Int       @default(0) @map("balance_applied")
+  balanceAppliedCents Int     @default(0) @map("balance_applied_cents")
   currency          String    @default("USD") @db.VarChar(8)
   credits           Int
   provider          String    @db.VarChar(32)

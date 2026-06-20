@@ -1,4 +1,5 @@
 import { getApiErrorMessage } from './imageApiShared'
+import { toUserFacingErrorMessage } from './userFacingErrors'
 import type { PlatformAuthRequest, PlatformAuthResponse } from './platformApiContracts'
 
 const PLATFORM_API_PREFIX = '/api/platform'
@@ -20,7 +21,7 @@ async function requestJson<T>(baseUrl: string, path: string, init: RequestInit =
     credentials: 'include',
     cache: 'no-store',
   })
-  if (!response.ok) throw new Error(await getApiErrorMessage(response))
+  if (!response.ok) throw new Error(toUserFacingErrorMessage(await getApiErrorMessage(response)))
   return response.json() as Promise<T>
 }
 

@@ -58,16 +58,23 @@ function mapPlan(row: Row): Plan {
     priceCents: Number(row.price_cents) || 0,
     currency: toCurrency(row.currency),
     enabled: Boolean(row.enabled),
+    recommended: Boolean(row.recommended),
+    ...(row.description ? { description: String(row.description) } : {}),
   }
 }
 
 function mapOrder(row: Row): Order {
+  const amountCents = Number(row.amount_cents) || 0
+  const balanceAppliedCents = Number(row.balance_applied_cents) || 0
   return {
     id: row.id,
     userId: row.user_id,
     planId: row.plan_id,
     status: row.status === 'paid' || row.status === 'cancelled' || row.status === 'expired' ? row.status : 'pending',
-    amountCents: Number(row.amount_cents) || 0,
+    originalAmountCents: Number(row.original_amount_cents) || amountCents + balanceAppliedCents,
+    amountCents,
+    balanceApplied: Number(row.balance_applied) || 0,
+    balanceAppliedCents,
     currency: toCurrency(row.currency),
     credits: Number(row.credits) || 0,
     provider: toProvider(row.provider),
@@ -113,11 +120,22 @@ async function ensureDefaultPlans(conn?: mysql.PoolConnection) {
   const exec = conn ? conn.execute.bind(conn) : mysqlExecute
   for (const plan of DEFAULT_PLANS) {
     await exec(
-      `INSERT INTO plans (id, name, credits, price_cents, currency, enabled, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE name=VALUES(name), credits=VALUES(credits), price_cents=VALUES(price_cents), currency=VALUES(currency), enabled=VALUES(enabled), updated_at=VALUES(updated_at)`,
-      [plan.id, plan.name, plan.credits, plan.priceCents, plan.currency, plan.enabled ? 1 : 0, nowSql(), nowSql()],
+      `INSERT INTO plans (id, name, credits, price_cents, currency, enabled, recommended, description, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE name=VALUES(name), credits=VALUES(credits), price_cents=VALUES(price_cents), currency=VALUES(currency), enabled=VALUES(enabled), recommended=VALUES(recommended), description=VALUES(description), updated_at=VALUES(updated_at)`,
+      [plan.id, plan.name, plan.credits, plan.priceCents, plan.currency, plan.enabled ? 1 : 0, plan.recommended ? 1 : 0, plan.description ?? null, nowSql(), nowSql()],
     )
+  }
+}
+
+async function ensurePlanMarketingColumns() {
+  const columns = await mysqlQuery<mysql.RowDataPacket[]>(`SHOW COLUMNS FROM plans`)
+  const names = new Set(columns.map((row) => String(row.Field)))
+  if (!names.has('recommended')) {
+    await mysqlExecute(`ALTER TABLE plans ADD COLUMN recommended tinyint(1) NOT NULL DEFAULT 0 AFTER enabled`)
+  }
+  if (!names.has('description')) {
+    await mysqlExecute(`ALTER TABLE plans ADD COLUMN description text NULL AFTER recommended`)
   }
 }
 
@@ -144,6 +162,21 @@ async function ensureUserPlanPackagesTable() {
       KEY idx_user_status (user_id, status, created_at)
     ) ENGINE=MyISAM DEFAULT CHARSET=utf8`,
   )
+}
+
+async function ensureOrderBalanceColumns() {
+  const columns = await mysqlQuery<mysql.RowDataPacket[]>(`SHOW COLUMNS FROM orders`)
+  const names = new Set(columns.map((row) => String(row.Field)))
+  if (!names.has('original_amount_cents')) {
+    await mysqlExecute(`ALTER TABLE orders ADD COLUMN original_amount_cents int NOT NULL DEFAULT 0 AFTER status`)
+    await mysqlExecute(`UPDATE orders SET original_amount_cents=amount_cents WHERE original_amount_cents=0`)
+  }
+  if (!names.has('balance_applied')) {
+    await mysqlExecute(`ALTER TABLE orders ADD COLUMN balance_applied int NOT NULL DEFAULT 0 AFTER amount_cents`)
+  }
+  if (!names.has('balance_applied_cents')) {
+    await mysqlExecute(`ALTER TABLE orders ADD COLUMN balance_applied_cents int NOT NULL DEFAULT 0 AFTER balance_applied`)
+  }
 }
 
 async function ensureAccount(conn: mysql.PoolConnection, userId: string): Promise<UserAccount> {
@@ -186,9 +219,26 @@ async function addLedgerEntry(conn: mysql.PoolConnection, input: {
   return mapLedger(rows[0])
 }
 
+function clampBalanceUnitCents(value: unknown): number {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return 100
+  return Math.max(1, Math.min(100_000, Math.trunc(numeric)))
+}
+
+async function grantPackageForOrder(conn: mysql.PoolConnection, order: Order) {
+  const packageId = genId('pkg')
+  await conn.execute(
+    `INSERT IGNORE INTO user_plan_packages (id, user_id, plan_id, order_id, total_uses, remaining_uses, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
+    [packageId, order.userId, order.planId, order.id, order.credits, order.credits, nowSql(), nowSql()],
+  )
+}
+
 export async function createMysqlBillingStore(): Promise<BillingStore> {
+  await ensurePlanMarketingColumns()
   await ensureDefaultPlans()
   await ensureUserPlanPackagesTable()
+  await ensureOrderBalanceColumns()
   await normalizeCurrencyToCny()
   await migrateMysqlUserIdsToNumeric()
 
@@ -216,14 +266,16 @@ export async function createMysqlBillingStore(): Promise<BillingStore> {
         priceCents: Math.max(0, Math.trunc(plan.priceCents)),
         currency: plan.currency === 'USD' ? 'USD' : 'CNY',
         enabled: Boolean(plan.enabled),
+        recommended: Boolean(plan.recommended),
+        ...(plan.description ? { description: plan.description.trim() } : {}),
       }
       if (!normalized.id) throw new Error('Plan ID is required')
       if (!normalized.name) throw new Error('Plan name is required')
       await mysqlExecute(
-        `INSERT INTO plans (id, name, credits, price_cents, currency, enabled, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE name=VALUES(name), credits=VALUES(credits), price_cents=VALUES(price_cents), currency=VALUES(currency), enabled=VALUES(enabled), updated_at=VALUES(updated_at)`,
-        [normalized.id, normalized.name, normalized.credits, normalized.priceCents, normalized.currency, normalized.enabled ? 1 : 0, nowSql(), nowSql()],
+        `INSERT INTO plans (id, name, credits, price_cents, currency, enabled, recommended, description, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE name=VALUES(name), credits=VALUES(credits), price_cents=VALUES(price_cents), currency=VALUES(currency), enabled=VALUES(enabled), recommended=VALUES(recommended), description=VALUES(description), updated_at=VALUES(updated_at)`,
+        [normalized.id, normalized.name, normalized.credits, normalized.priceCents, normalized.currency, normalized.enabled ? 1 : 0, normalized.recommended ? 1 : 0, normalized.description ?? null, nowSql(), nowSql()],
       )
       const rows = await mysqlQuery<mysql.RowDataPacket[]>(`SELECT * FROM plans WHERE id=? LIMIT 1`, [normalized.id])
       return mapPlan(rows[0])
@@ -240,13 +292,38 @@ export async function createMysqlBillingStore(): Promise<BillingStore> {
       const rows = await mysqlQuery<mysql.RowDataPacket[]>(`SELECT * FROM orders WHERE user_id=? ORDER BY created_at DESC LIMIT ${Math.max(1, Math.min(100, Math.trunc(limit || 20)))}`, [userId])
       return rows.map(mapOrder)
     },
+    async getOrder(userId, orderId) {
+      const rows = await mysqlQuery<mysql.RowDataPacket[]>(`SELECT * FROM orders WHERE id=? AND user_id=? LIMIT 1`, [orderId, userId])
+      return rows[0] ? mapOrder(rows[0]) : null
+    },
+    async getOrderById(orderId) {
+      const rows = await mysqlQuery<mysql.RowDataPacket[]>(`SELECT * FROM orders WHERE id=? LIMIT 1`, [orderId])
+      return rows[0] ? mapOrder(rows[0]) : null
+    },
+    async getPendingOrder(userId) {
+      const rows = await mysqlQuery<mysql.RowDataPacket[]>(`SELECT * FROM orders WHERE user_id=? AND status='pending' ORDER BY created_at DESC LIMIT 1`, [userId])
+      return rows[0] ? mapOrder(rows[0]) : null
+    },
+    async listPaymentEvents(limit = 50) {
+      const rows = await mysqlQuery<mysql.RowDataPacket[]>(
+        `SELECT * FROM payment_events ORDER BY processed_at DESC LIMIT ${Math.max(1, Math.min(200, Math.trunc(limit || 50)))}`,
+      )
+      return rows.map((row) => ({
+        id: row.id,
+        provider: toProvider(row.provider),
+        providerEventId: row.provider_event_id,
+        orderId: row.order_id ?? undefined,
+        processedAt: toIso(row.processed_at),
+        raw: row.raw ? JSON.parse(String(row.raw)) : null,
+      }))
+    },
     async getAdminStats() {
       const [users, orders, paidOrders, pendingOrders, revenue, issued, debited, balances] = await Promise.all([
         mysqlQuery<mysql.RowDataPacket[]>(`SELECT COUNT(*) count FROM user_accounts`),
         mysqlQuery<mysql.RowDataPacket[]>(`SELECT COUNT(*) count FROM orders`),
         mysqlQuery<mysql.RowDataPacket[]>(`SELECT COUNT(*) count FROM orders WHERE status='paid'`),
         mysqlQuery<mysql.RowDataPacket[]>(`SELECT COUNT(*) count FROM orders WHERE status='pending'`),
-        mysqlQuery<mysql.RowDataPacket[]>(`SELECT COALESCE(SUM(amount_cents),0) total FROM orders WHERE status='paid'`),
+        mysqlQuery<mysql.RowDataPacket[]>(`SELECT COALESCE(SUM(CASE WHEN original_amount_cents > 0 THEN original_amount_cents ELSE amount_cents + COALESCE(balance_applied_cents,0) END),0) total FROM orders WHERE status='paid'`),
         mysqlQuery<mysql.RowDataPacket[]>(`SELECT COALESCE(SUM(amount),0) total FROM credit_ledger WHERE amount > 0`),
         mysqlQuery<mysql.RowDataPacket[]>(`SELECT COALESCE(SUM(amount),0) total FROM credit_ledger WHERE amount < 0`),
         mysqlQuery<mysql.RowDataPacket[]>(`SELECT COALESCE(SUM(available_credits),0) total FROM balances`),
@@ -262,20 +339,65 @@ export async function createMysqlBillingStore(): Promise<BillingStore> {
         availableCredits: Number(balances[0].total) || 0,
       }
     },
-    async createOrder(userId, planId, provider = 'dev') {
+    async createOrder(userId, planId, provider = 'dev', options = {}) {
       return mysqlTransaction(async (conn) => {
         await ensureAccount(conn, userId)
+        const [pendingOrders] = await conn.query<mysql.RowDataPacket[]>(`SELECT * FROM orders WHERE user_id=? AND status='pending' ORDER BY created_at DESC LIMIT 1`, [userId])
+        if (pendingOrders[0]) throw new Error(`Pending order exists: ${pendingOrders[0].id}`)
         const [plans] = await conn.query<mysql.RowDataPacket[]>(`SELECT * FROM plans WHERE id=? AND enabled=1 LIMIT 1`, [planId])
         if (!plans[0]) throw new Error('Plan not found')
         const plan = mapPlan(plans[0])
+        const balance = await getBalanceInTx(conn, userId)
+        const balanceUnitCents = clampBalanceUnitCents(options.balanceUnitCents)
+        const maxBalanceUnitsByAmount = Math.floor(plan.priceCents / balanceUnitCents)
+        const balanceApplied = options.useBalance === false ? 0 : Math.max(0, Math.min(balance.availableCredits, maxBalanceUnitsByAmount))
+        const balanceAppliedCents = balanceApplied * balanceUnitCents
+        const amountCents = Math.max(0, plan.priceCents - balanceAppliedCents)
+        const paidByBalance = amountCents === 0 && options.autoPayCovered !== false
         const id = genOrderId()
         await conn.execute(
-          `INSERT INTO orders (id, user_id, plan_id, status, amount_cents, currency, credits, provider, created_at)
-           VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
-          [id, userId, planId, plan.priceCents, plan.currency, plan.credits, provider, nowSql()],
+          `INSERT INTO orders (id, user_id, plan_id, status, original_amount_cents, amount_cents, balance_applied, balance_applied_cents, currency, credits, provider, created_at, paid_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [id, userId, planId, paidByBalance ? 'paid' : 'pending', plan.priceCents, amountCents, balanceApplied, balanceAppliedCents, plan.currency, plan.credits, provider, nowSql(), paidByBalance ? nowSql() : null],
         )
+        if (balanceApplied > 0) {
+          await addLedgerEntry(conn, {
+            userId,
+            type: 'debit',
+            amount: -balanceApplied,
+            source: 'order',
+            sourceId: `order-balance:${id}`,
+            description: `余额抵扣套餐订单 ${id}`,
+          })
+        }
         const [rows] = await conn.query<mysql.RowDataPacket[]>(`SELECT * FROM orders WHERE id=?`, [id])
-        return mapOrder(rows[0])
+        const order = mapOrder(rows[0])
+        if (paidByBalance) await grantPackageForOrder(conn, order)
+        return order
+      })
+    },
+    async cancelOrder(userId, orderId) {
+      return mysqlTransaction(async (conn) => {
+        const [orders] = await conn.query<mysql.RowDataPacket[]>(`SELECT * FROM orders WHERE id=? AND user_id=? LIMIT 1`, [orderId, userId])
+        if (!orders[0]) throw new Error('Order not found')
+        const order = mapOrder(orders[0])
+        if (order.status !== 'pending') throw new Error('Only pending orders can be cancelled')
+        await conn.execute(`UPDATE orders SET status='cancelled' WHERE id=?`, [order.id])
+        if (order.balanceApplied > 0) {
+          const [existing] = await conn.query<mysql.RowDataPacket[]>(`SELECT id FROM credit_ledger WHERE source_id=? LIMIT 1`, [`refund:order-balance:${order.id}`])
+          if (!existing[0]) {
+            await addLedgerEntry(conn, {
+              userId: order.userId,
+              type: 'refund',
+              amount: order.balanceApplied,
+              source: 'order',
+              sourceId: `refund:order-balance:${order.id}`,
+              description: `取消订单退回余额 ${order.id}`,
+            })
+          }
+        }
+        const [updated] = await conn.query<mysql.RowDataPacket[]>(`SELECT * FROM orders WHERE id=? LIMIT 1`, [order.id])
+        return mapOrder(updated[0])
       })
     },
     async markOrderPaid(input) {
@@ -296,12 +418,7 @@ export async function createMysqlBillingStore(): Promise<BillingStore> {
           `INSERT INTO payment_events (id, provider, provider_event_id, order_id, processed_at, raw) VALUES (?, ?, ?, ?, ?, ?)`,
           [genId('evt'), input.provider, input.providerEventId, order.id, nowSql(), JSON.stringify(input.raw ?? {})],
         )
-        const packageId = genId('pkg')
-        await conn.execute(
-          `INSERT IGNORE INTO user_plan_packages (id, user_id, plan_id, order_id, total_uses, remaining_uses, status, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
-          [packageId, order.userId, order.planId, order.id, order.credits, order.credits, nowSql(), nowSql()],
-        )
+        await grantPackageForOrder(conn, order)
         const [updated] = await conn.query<mysql.RowDataPacket[]>(`SELECT * FROM orders WHERE id=?`, [order.id])
         return { order: mapOrder(updated[0]), duplicate: false as const }
       })

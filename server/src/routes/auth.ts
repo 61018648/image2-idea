@@ -1,6 +1,6 @@
 import { createSessionCookie, clearSessionCookie, readCookieSession } from '../auth/cookieSession.js'
 import { hashPassword, verifyPassword } from '../auth/password.js'
-import { createMysqlUser, findMysqlUserByUsername, findMysqlUserById, updateMysqlUserLastLogin } from '../auth/mysqlAccounts.js'
+import { createMysqlUser, findMysqlUserByLogin, findMysqlUserByUsername, findMysqlUserById, updateMysqlUserLastLogin } from '../auth/mysqlAccounts.js'
 import { getBillingStore } from '../billing/store.js'
 import { useMysqlCompat } from '../db/mysqlCompat.js'
 import { getPrismaClient } from '../db/prisma.js'
@@ -108,7 +108,7 @@ export async function handleAuthRequest(request: Request): Promise<Response> {
     }
 
     if (useMysqlCompat()) {
-      const account = await findMysqlUserByUsername(username)
+      const account = await findMysqlUserByLogin(username)
       if (!account || !account.passwordHash || account.status !== 'active') return errorResponse('Invalid username or password', 401, 'invalid_credentials')
       const passwordOk = await verifyPassword(password, account.passwordHash)
       if (!passwordOk) return errorResponse('Invalid username or password', 401, 'invalid_credentials')
