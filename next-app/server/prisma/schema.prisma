@@ -1,0 +1,178 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model UserAccount {
+  id           String    @id @db.VarChar(128)
+  username     String?   @unique @db.VarChar(191)
+  email        String?   @unique @db.VarChar(191)
+  passwordHash String?   @map("password_hash") @db.VarChar(255)
+  displayName  String?   @map("display_name") @db.VarChar(191)
+  avatarUrl    String?   @map("avatar_url") @db.Text
+  phone        String?   @db.VarChar(32)
+  adminNote    String?   @map("admin_note") @db.Text
+  role         String    @default("user") @db.VarChar(32)
+  status       String    @default("active") @db.VarChar(32)
+  lastLoginAt  DateTime? @map("last_login_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  balance Balance?
+  ledger  CreditLedger[]
+  orders  Order[]
+  jobs    GenerationJob[]
+  packages UserPlanPackage[]
+
+  @@map("user_accounts")
+}
+
+model Balance {
+  userId           String      @id @map("user_id") @db.VarChar(128)
+  availableCredits Int         @default(0) @map("available_credits")
+  updatedAt        DateTime    @default(now()) @updatedAt @map("updated_at")
+
+  user UserAccount @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("balances")
+}
+
+model Plan {
+  id          String   @id @db.VarChar(128)
+  name        String   @db.VarChar(191)
+  credits     Int
+  priceCents  Int      @map("price_cents")
+  currency    String   @default("USD") @db.VarChar(8)
+  enabled     Boolean  @default(true)
+  recommended Boolean  @default(false)
+  description String?  @db.Text
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  orders Order[]
+  packages UserPlanPackage[]
+
+  @@map("plans")
+}
+
+model Order {
+  id                String    @id @db.VarChar(128)
+  userId            String    @map("user_id") @db.VarChar(128)
+  planId            String    @map("plan_id") @db.VarChar(128)
+  status            String    @default("pending") @db.VarChar(32)
+  originalAmountCents Int     @default(0) @map("original_amount_cents")
+  amountCents       Int       @map("amount_cents")
+  balanceApplied    Int       @default(0) @map("balance_applied")
+  balanceAppliedCents Int     @default(0) @map("balance_applied_cents")
+  currency          String    @default("USD") @db.VarChar(8)
+  credits           Int
+  provider          String    @db.VarChar(32)
+  providerOrderId   String?   @map("provider_order_id") @db.VarChar(191)
+  providerPaymentId String?   @map("provider_payment_id") @db.VarChar(191)
+  createdAt         DateTime  @default(now()) @map("created_at")
+  paidAt            DateTime? @map("paid_at")
+
+  user UserAccount @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan Plan        @relation(fields: [planId], references: [id])
+
+  @@index([userId, createdAt])
+  @@map("orders")
+}
+
+model UserPlanPackage {
+  id            String    @id @db.VarChar(128)
+  userId        String    @map("user_id") @db.VarChar(128)
+  planId        String    @map("plan_id") @db.VarChar(128)
+  orderId       String    @unique @map("order_id") @db.VarChar(128)
+  totalUses     Int       @map("total_uses")
+  remainingUses Int       @map("remaining_uses")
+  status        String    @default("active") @db.VarChar(32)
+  expiresAt     DateTime? @map("expires_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  user UserAccount @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan Plan        @relation(fields: [planId], references: [id])
+
+  @@index([userId, status, createdAt])
+  @@map("user_plan_packages")
+}
+
+model CreditLedger {
+  id           String   @id @db.VarChar(128)
+  userId       String   @map("user_id") @db.VarChar(128)
+  type         String   @db.VarChar(32)
+  amount       Int
+  balanceAfter Int      @map("balance_after")
+  source       String   @db.VarChar(32)
+  sourceId     String?  @unique @map("source_id") @db.VarChar(191)
+  description  String?  @db.Text
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  user UserAccount @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("credit_ledger")
+}
+
+model PaymentEvent {
+  id              String   @id @db.VarChar(128)
+  provider        String   @db.VarChar(32)
+  providerEventId String   @map("provider_event_id") @db.VarChar(128)
+  orderId         String?  @map("order_id") @db.VarChar(128)
+  processedAt     DateTime @default(now()) @map("processed_at")
+  raw             Json
+
+  @@unique([provider, providerEventId])
+  @@map("payment_events")
+}
+
+model GenerationJob {
+  id             String    @id @db.VarChar(128)
+  userId         String    @map("user_id") @db.VarChar(128)
+  status         String    @default("queued") @db.VarChar(32)
+  prompt         String    @db.Text
+  requestParams  Json      @map("request_params")
+  inputImageData Json      @default("[]") @map("input_image_data")
+  maskDataUrl    String?   @map("mask_data_url") @db.Text
+  costCredits    Int       @map("cost_credits")
+  images         Json      @default("[]")
+  rawImageUrls   Json?     @map("raw_image_urls")
+  revisedPrompts Json?     @map("revised_prompts")
+  actualParams   Json?     @map("actual_params")
+  errorMessage   String?   @map("error_message") @db.Text
+  createdAt      DateTime  @default(now()) @map("created_at")
+  startedAt      DateTime? @map("started_at")
+  finishedAt     DateTime? @map("finished_at")
+
+  user UserAccount @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@map("generation_jobs")
+}
+
+model PlatformSetting {
+  key       String   @id @map("setting_key") @db.VarChar(191)
+  value     String?  @map("setting_value") @db.Text
+  updatedAt DateTime @map("updated_at")
+
+  @@map("platform_settings")
+}
+
+model EmailVerificationCode {
+  id        String    @id @db.VarChar(64)
+  email     String    @db.VarChar(191)
+  purpose   String    @db.VarChar(32)
+  code      String    @db.VarChar(12)
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @map("created_at")
+
+  @@index([email, purpose, code], map: "email_verification_lookup")
+  @@map("email_verification_codes")
+}

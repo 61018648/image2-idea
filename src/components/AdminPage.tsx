@@ -33,7 +33,7 @@ import { CloseIcon, CodeIcon, EditIcon, HistoryIcon, LinkIcon, PlusIcon, Refresh
 type AdminTab = 'dashboard' | 'config' | 'plans' | 'users' | 'orders' | 'generationLogs'
 type ConfigForm = PlatformAdminConfigResponse['config'] & { openaiApiKey: string; epayKey: string; smtpPassword: string }
 type UserForm = { username: string; email: string; phone: string; adminNote: string; password: string; displayName: string; role: 'user' | 'admin'; availableCredits: string }
-type PlanForm = { id: string; name: string; uses: string; priceYuan: string; enabled: boolean; recommended: boolean; description: string }
+type PlanForm = { id: string; originalId?: string; name: string; uses: string; priceYuan: string; enabled: boolean; recommended: boolean; description: string }
 type EditUserForm = {
   user: PlatformAdminUserResponse
   username: string
@@ -340,6 +340,7 @@ export default function AdminPage() {
       const response = await updateAdminConfig(activeProfile.baseUrl, payload)
       setConfig(response.config)
       setConfigForm(toConfigForm(response.config))
+      window.dispatchEvent(new Event('platform-config-updated'))
       showToast('站点配置已保存', 'success')
     } catch (err) {
       showToast(err instanceof Error ? err.message : String(err), 'error')
@@ -371,13 +372,33 @@ export default function AdminPage() {
 
   const savePlan = async () => {
     if (!editingPlan) return
+    const planId = (editingPlan.originalId || editingPlan.id).trim()
+    const planName = editingPlan.name.trim()
+    const credits = Number(editingPlan.uses)
+    const priceYuan = Number(editingPlan.priceYuan)
+    if (!/^[a-zA-Z0-9_-]{2,64}$/.test(planId)) {
+      showToast('套餐 ID 只能使用英文、数字、下划线或中划线，长度 2-64 位', 'error')
+      return
+    }
+    if (!planName) {
+      showToast('请填写套餐名称', 'error')
+      return
+    }
+    if (!Number.isFinite(credits) || credits <= 0) {
+      showToast('包含次数必须大于 0', 'error')
+      return
+    }
+    if (!Number.isFinite(priceYuan) || priceYuan < 0) {
+      showToast('价格不能小于 0', 'error')
+      return
+    }
     setSavingConfig(true)
     try {
       const response = await upsertAdminPlan(activeProfile.baseUrl, {
-        id: editingPlan.id,
-        name: editingPlan.name,
-        credits: Number(editingPlan.uses) || 0,
-        priceCents: Math.round((Number(editingPlan.priceYuan) || 0) * 100),
+        id: planId,
+        name: planName,
+        credits,
+        priceCents: Math.round(priceYuan * 100),
         currency: 'CNY',
         enabled: editingPlan.enabled,
         recommended: editingPlan.recommended,
@@ -881,7 +902,7 @@ export default function AdminPage() {
                   <h3 className="text-base font-semibold text-gray-950 dark:text-white">套餐设置</h3>
                   <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">配置用户中心展示的次数包。未购买套餐或次数用完时，生图按站点配置扣余额。</p>
                 </div>
-                <button type="button" onClick={() => setEditingPlan(emptyPlanForm)} className="inline-flex items-center gap-2 rounded-lg bg-gray-950 px-3 py-2 text-sm font-semibold text-white transition hover:bg-gray-800 dark:bg-white dark:text-gray-950 dark:hover:bg-gray-200">
+                <button type="button" onClick={() => setEditingPlan({ ...emptyPlanForm })} className="inline-flex items-center gap-2 rounded-lg bg-gray-950 px-3 py-2 text-sm font-semibold text-white transition hover:bg-gray-800 dark:bg-white dark:text-gray-950 dark:hover:bg-gray-200">
                   <PlusIcon className="h-4 w-4" />
                   添加套餐
                 </button>
@@ -913,7 +934,7 @@ export default function AdminPage() {
                         <td className="py-3 pr-4">
                           <button
                             type="button"
-                            onClick={() => setEditingPlan({ id: plan.id, name: plan.name, uses: String(plan.credits), priceYuan: String(plan.priceCents / 100), enabled: plan.enabled, recommended: plan.recommended, description: plan.description || '' })}
+                            onClick={() => setEditingPlan({ id: plan.id, originalId: plan.id, name: plan.name, uses: String(plan.credits), priceYuan: String(plan.priceCents / 100), enabled: plan.enabled, recommended: plan.recommended, description: plan.description || '' })}
                             className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:border-white/[0.1] dark:text-gray-200 dark:hover:bg-white/[0.06]"
                           >
                             <EditIcon className="h-3.5 w-3.5" />
@@ -1224,10 +1245,15 @@ export default function AdminPage() {
       )}
 
       {editingPlan && (
-        <Modal title="编辑套餐" onClose={() => setEditingPlan(null)}>
+        <Modal title={editingPlan.originalId ? '编辑套餐' : '添加套餐'} onClose={() => setEditingPlan(null)}>
           <div className="grid gap-4">
-            <Field label="套餐 ID" hint="创建后会作为订单关联标识，建议使用英文、数字、中划线。">
-              <input className={inputClass()} value={editingPlan.id} onChange={(e) => setEditingPlan({ ...editingPlan, id: e.target.value })} />
+            <Field label="套餐 ID" hint={editingPlan.originalId ? '套餐 ID 已用于订单关联，编辑时不可修改。' : '创建后会作为订单关联标识，建议使用英文、数字、中划线。'}>
+              <input
+                className={`${inputClass()} disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500 dark:disabled:bg-white/[0.06]`}
+                value={editingPlan.id}
+                disabled={Boolean(editingPlan.originalId)}
+                onChange={(e) => setEditingPlan({ ...editingPlan, id: e.target.value.trim() })}
+              />
             </Field>
             <Field label="套餐名称"><input className={inputClass()} value={editingPlan.name} onChange={(e) => setEditingPlan({ ...editingPlan, name: e.target.value })} /></Field>
             <Field label="包含次数"><input className={inputClass()} type="number" min={1} value={editingPlan.uses} onChange={(e) => setEditingPlan({ ...editingPlan, uses: e.target.value })} /></Field>

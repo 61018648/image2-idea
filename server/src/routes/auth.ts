@@ -70,7 +70,7 @@ export async function handleAuthRequest(request: Request): Promise<Response> {
     const prisma = getPrismaClient()
     const account = await prisma.userAccount.findUnique({ where: { id: session.userId } })
     if (!account || account.status !== 'active') return errorResponse('Unauthorized', 401, 'unauthorized')
-    return jsonResponse({ user: { id: account.id, username: account.displayName, email: account.email, role: account.role === 'admin' ? 'admin' : 'user', mode: 'authenticated' } })
+    return jsonResponse({ user: { id: account.id, username: account.username ?? account.displayName, email: account.email, role: account.role === 'admin' ? 'admin' : 'user', mode: 'authenticated' } })
   }
 
   if (pathname === '/api/platform/auth/logout' && request.method === 'POST') {
@@ -117,12 +117,13 @@ export async function handleAuthRequest(request: Request): Promise<Response> {
       }
 
       const prisma = getPrismaClient()
-      const existing = await prisma.userAccount.findFirst({ where: { displayName: username } })
+      const existing = await prisma.userAccount.findFirst({ where: { username } })
       if (existing) return errorResponse('Username is already registered', 409, 'username_exists')
       const passwordHash = await hashPassword(password)
       const account = await prisma.userAccount.create({
         data: {
           id: String(Date.now()),
+          username,
           email: email || null,
           passwordHash,
           displayName: username,
@@ -133,7 +134,7 @@ export async function handleAuthRequest(request: Request): Promise<Response> {
         },
       })
       await getBillingStore().getOrCreateAccount(account.id).catch(() => undefined)
-      return authResponse({ user: { id: account.id, username: account.displayName, email: account.email, role: account.role === 'admin' ? 'admin' : 'user', mode: 'authenticated' } }, createSessionCookie({ userId: account.id }))
+      return authResponse({ user: { id: account.id, username: account.username, email: account.email, role: account.role === 'admin' ? 'admin' : 'user', mode: 'authenticated' } }, createSessionCookie({ userId: account.id }))
     }
 
     if (useMysqlCompat()) {
@@ -146,12 +147,14 @@ export async function handleAuthRequest(request: Request): Promise<Response> {
     }
 
     const prisma = getPrismaClient()
-    const account = await prisma.userAccount.findFirst({ where: { displayName: username } })
+    const account = await prisma.userAccount.findFirst({
+      where: { OR: [{ username }, { email: username }, { displayName: username }] },
+    })
     if (!account || !account.passwordHash || account.status !== 'active') return errorResponse('Invalid username or password', 401, 'invalid_credentials')
     const passwordOk = await verifyPassword(password, account.passwordHash)
     if (!passwordOk) return errorResponse('Invalid username or password', 401, 'invalid_credentials')
     await prisma.userAccount.update({ where: { id: account.id }, data: { lastLoginAt: new Date() } })
-    return authResponse({ user: { id: account.id, username: account.displayName, email: account.email, role: account.role === 'admin' ? 'admin' : 'user', mode: 'authenticated' } }, createSessionCookie({ userId: account.id }))
+    return authResponse({ user: { id: account.id, username: account.username ?? account.displayName, email: account.email, role: account.role === 'admin' ? 'admin' : 'user', mode: 'authenticated' } }, createSessionCookie({ userId: account.id }))
   }
 
   return errorResponse('Not found', 404, 'not_found')

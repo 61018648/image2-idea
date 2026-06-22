@@ -1,4 +1,5 @@
 import { createServer, type IncomingHttpHeaders, type IncomingMessage } from 'node:http'
+import { resolve } from 'node:path'
 import { loadEnvFile } from './env.js'
 import { initBillingStore } from './billing/store.js'
 import { handleAccountRequest } from './routes/account.js'
@@ -11,6 +12,7 @@ import { handleGenerationsRequest } from './routes/generations.js'
 import { handleEpayNotifyRequest, handlePaymentNotifyRequest } from './routes/paymentNotify.js'
 import { handlePlatformImageGeneration } from './routes/platformImages.js'
 
+loadEnvFile(resolve(process.cwd(), 'server/.env'))
 loadEnvFile()
 
 const HOST = process.env.PLATFORM_HOST || '127.0.0.1'
@@ -69,7 +71,7 @@ async function createWebRequest(incoming: IncomingMessage): Promise<Request> {
   })
 }
 
-async function route(request: Request): Promise<Response> {
+export async function routePlatformRequest(request: Request): Promise<Response> {
   const url = new URL(request.url)
 
   if (url.pathname === '/api/platform/health') {
@@ -119,13 +121,13 @@ async function route(request: Request): Promise<Response> {
   return jsonResponse({ error: { message: 'Not found', code: 'not_found' } }, 404)
 }
 
-async function main() {
+export async function startPlatformServer() {
   await initBillingStore()
 
   createServer(async (incoming, outgoing) => {
     try {
       const request = await createWebRequest(incoming)
-      const response = await route(request)
+      const response = await routePlatformRequest(request)
       outgoing.writeHead(response.status, Object.fromEntries(response.headers.entries()))
       if (response.body) {
         const reader = response.body.getReader()
@@ -146,4 +148,6 @@ async function main() {
   })
 }
 
-void main()
+if (import.meta.url === `file://${process.argv[1]?.replace(/\\/g, '/')}`) {
+  void startPlatformServer()
+}

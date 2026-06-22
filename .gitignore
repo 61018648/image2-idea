@@ -1,5 +1,6 @@
 node_modules/
 dist/
+.next/
 dev-proxy.config.json
 .wrangler/
 .env

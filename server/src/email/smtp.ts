@@ -31,6 +31,10 @@ function nowSql(date = new Date()) {
   return date.toISOString().slice(0, 19).replace('T', ' ')
 }
 
+function toDate(value: string) {
+  return new Date(value.replace(' ', 'T'))
+}
+
 function normalizeEmail(email: string) {
   return email.trim().toLowerCase()
 }
@@ -210,28 +214,16 @@ async function saveCode(row: VerificationRow) {
   }
   if (process.env.DATABASE_URL?.trim()) {
     try {
-      await getPrismaClient().$executeRawUnsafe(
-        `CREATE TABLE IF NOT EXISTS email_verification_codes (
-          id varchar(64) NOT NULL,
-          email varchar(191) NOT NULL,
-          purpose varchar(32) NOT NULL,
-          code varchar(12) NOT NULL,
-          expires_at datetime NOT NULL,
-          used_at datetime NULL,
-          created_at datetime NOT NULL,
-          PRIMARY KEY (id)
-        )`,
-      )
-      await getPrismaClient().$executeRawUnsafe(
-        `INSERT INTO email_verification_codes (id, email, purpose, code, expires_at, used_at, created_at)
-         VALUES (?, ?, ?, ?, ?, NULL, ?)`,
-        row.id,
-        row.email,
-        row.purpose,
-        row.code,
-        row.expires_at,
-        row.created_at,
-      )
+      await getPrismaClient().emailVerificationCode.create({
+        data: {
+          id: row.id,
+          email: row.email,
+          purpose: row.purpose,
+          code: row.code,
+          expiresAt: toDate(row.expires_at),
+          createdAt: toDate(row.created_at),
+        },
+      })
       return
     } catch {
       /* memory fallback */
@@ -253,16 +245,25 @@ async function findCode(email: string, purpose: EmailPurpose, code: string): Pro
   }
   if (process.env.DATABASE_URL?.trim()) {
     try {
-      const rows = await getPrismaClient().$queryRawUnsafe<VerificationRow[]>(
-        `SELECT * FROM email_verification_codes
-         WHERE email=? AND purpose=? AND code=? AND used_at IS NULL AND expires_at > ?
-         ORDER BY created_at DESC LIMIT 1`,
-        email,
-        purpose,
-        code,
-        nowSql(),
-      )
-      return rows[0] ?? null
+      const row = await getPrismaClient().emailVerificationCode.findFirst({
+        where: {
+          email,
+          purpose,
+          code,
+          usedAt: null,
+          expiresAt: { gt: new Date() },
+        },
+        orderBy: { createdAt: 'desc' },
+      })
+      return row ? {
+        id: row.id,
+        email: row.email,
+        purpose: row.purpose as EmailPurpose,
+        code: row.code,
+        expires_at: nowSql(row.expiresAt),
+        used_at: row.usedAt ? nowSql(row.usedAt) : null,
+        created_at: nowSql(row.createdAt),
+      } : null
     } catch {
       /* memory fallback */
     }
@@ -283,7 +284,7 @@ async function markCodeUsed(id: string) {
   }
   if (process.env.DATABASE_URL?.trim()) {
     try {
-      await getPrismaClient().$executeRawUnsafe(`UPDATE email_verification_codes SET used_at=? WHERE id=?`, nowSql(), id)
+      await getPrismaClient().emailVerificationCode.update({ where: { id }, data: { usedAt: new Date() } })
       return
     } catch {
       /* memory fallback */

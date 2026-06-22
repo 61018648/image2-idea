@@ -140,11 +140,10 @@ async function readSettings(keys: string[]): Promise<Record<string, string>> {
 
   if (process.env.DATABASE_URL?.trim()) {
     try {
-      const rows = await getPrismaClient().$queryRawUnsafe<Array<{ setting_key: string; setting_value: string | null }>>(
-        `SELECT setting_key, setting_value FROM platform_settings WHERE setting_key IN (${keys.map(() => '?').join(',')})`,
-        ...keys,
-      )
-      return Object.fromEntries(rows.map((row) => [String(row.setting_key), String(row.setting_value ?? '')]))
+      const rows = await getPrismaClient().platformSetting.findMany({
+        where: { key: { in: keys } },
+      })
+      return Object.fromEntries(rows.map((row) => [row.key, row.value ?? '']))
     } catch {
       return {}
     }
@@ -173,14 +172,11 @@ async function writeSettings(settings: Record<string, string>): Promise<void> {
   if (process.env.DATABASE_URL?.trim()) {
     for (const [key, value] of entries) {
       try {
-        await getPrismaClient().$executeRawUnsafe(
-          `INSERT INTO platform_settings (setting_key, setting_value, updated_at)
-           VALUES (?, ?, ?)
-           ON DUPLICATE KEY UPDATE setting_value=VALUES(setting_value), updated_at=VALUES(updated_at)`,
-          key,
-          value,
-          nowSql(),
-        )
+        await getPrismaClient().platformSetting.upsert({
+          where: { key },
+          update: { value, updatedAt: new Date() },
+          create: { key, value, updatedAt: new Date() },
+        })
       } catch {
         MEMORY_SETTINGS.set(key, value)
       }

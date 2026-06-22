@@ -1,4 +1,5 @@
 import type mysql from 'mysql2/promise'
+import type { Prisma } from '@prisma/client'
 import { getBillingStore } from '../billing/store.js'
 import { getGenerationJobStore } from '../generationJobs/store.js'
 import { readImageProviderConfig, readPlatformConfig, updatePlatformConfig, type PlatformConfigPatch } from '../admin/configStore.js'
@@ -232,6 +233,54 @@ async function createAdminMysqlUser(body: Record<string, unknown>) {
   }
 }
 
+async function nextPrismaUserId() {
+  const rows = await getPrismaClient().$queryRaw<Array<{ max_id: bigint | number | null }>>`
+    SELECT MAX(CAST(id AS INTEGER)) AS max_id FROM user_accounts WHERE id ~ '^[0-9]+$'
+  `
+  return String(Math.max(1000, Number(rows[0]?.max_id ?? 1000)) + 1)
+}
+
+async function createAdminPrismaUser(body: Record<string, unknown>) {
+  const prisma = getPrismaClient()
+  const username = typeof body.username === 'string' ? body.username.trim() : ''
+  const email = typeof body.email === 'string' && body.email.trim() ? body.email.trim().toLowerCase() : null
+  const phone = typeof body.phone === 'string' && body.phone.trim() ? body.phone.trim() : null
+  const adminNote = typeof body.adminNote === 'string' && body.adminNote.trim() ? body.adminNote.trim() : null
+  const password = typeof body.password === 'string' ? body.password : ''
+  const displayName = typeof body.displayName === 'string' && body.displayName.trim() ? body.displayName.trim() : username
+  const role = body.role === 'admin' ? 'admin' : 'user'
+  const availableCredits = Number(body.availableCredits ?? 0)
+  if (!username || username.length < 3) throw new Error('Username must be at least 3 characters')
+  if (email && !/^\S+@\S+\.\S+$/.test(email)) throw new Error('Valid email is required')
+  if (password.length < 8) throw new Error('Password must be at least 8 characters')
+  const existing = await prisma.userAccount.findUnique({ where: { username } })
+  if (existing) throw new Error('Username is already registered')
+  const user = await prisma.userAccount.create({
+    data: {
+      id: await nextPrismaUserId(),
+      username,
+      email,
+      phone,
+      adminNote,
+      passwordHash: await hashPassword(password),
+      displayName,
+      role,
+      status: 'active',
+      balance: { create: { availableCredits: Number.isFinite(availableCredits) ? Math.max(0, Math.trunc(availableCredits)) : 0 } },
+    },
+  })
+  return {
+    id: user.id,
+    username: user.username,
+    email: user.email,
+    phone: user.phone,
+    adminNote: user.adminNote,
+    displayName: user.displayName,
+    role: user.role,
+    status: user.status,
+  }
+}
+
 async function setUserCredits(userId: string, targetCredits: number, description?: string) {
   const balance = await getBillingStore().getBalance(userId)
   const delta = Math.trunc(targetCredits) - balance.availableCredits
@@ -291,6 +340,47 @@ async function updateAdminMysqlUser(body: Record<string, unknown>) {
   }
 }
 
+async function updateAdminPrismaUser(body: Record<string, unknown>) {
+  const prisma = getPrismaClient()
+  const userId = typeof body.userId === 'string' ? body.userId.trim() : ''
+  if (!userId) throw new Error('User ID is required')
+  const data: Prisma.UserAccountUpdateInput = {}
+  if (typeof body.username === 'string') {
+    const username = body.username.trim()
+    if (!username || username.length < 3) throw new Error('Username must be at least 3 characters')
+    const existing = await prisma.userAccount.findUnique({ where: { username } })
+    if (existing && existing.id !== userId) throw new Error('Username is already registered')
+    data.username = username
+  }
+  if (typeof body.email === 'string') {
+    const email = body.email.trim() ? body.email.trim().toLowerCase() : null
+    if (email && !/^\S+@\S+\.\S+$/.test(email)) throw new Error('Valid email is required')
+    data.email = email
+  }
+  if (typeof body.phone === 'string') data.phone = body.phone.trim() || null
+  if (typeof body.adminNote === 'string') data.adminNote = body.adminNote.trim() || null
+  if (typeof body.displayName === 'string') data.displayName = body.displayName.trim()
+  if (typeof body.password === 'string' && body.password.length > 0) {
+    if (body.password.length < 8) throw new Error('Password must be at least 8 characters')
+    if (body.password.length > 128) throw new Error('Password is too long')
+    data.passwordHash = await hashPassword(body.password)
+  }
+  if (body.status === 'active' || body.status === 'disabled') data.status = body.status
+  const user = await prisma.userAccount.update({ where: { id: userId }, data })
+  return {
+    user: {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      phone: user.phone,
+      adminNote: user.adminNote,
+      displayName: user.displayName,
+      role: user.role,
+      status: user.status,
+    },
+  }
+}
+
 async function listPrismaUsers(limit: number) {
   const prisma = getPrismaClient()
   const users = await prisma.userAccount.findMany({
@@ -300,9 +390,12 @@ async function listPrismaUsers(limit: number) {
   })
   return users.map((user) => ({
     id: user.id,
+    username: user.username,
     email: user.email,
     displayName: user.displayName,
     avatarUrl: user.avatarUrl,
+    phone: user.phone,
+    adminNote: user.adminNote,
     role: user.role,
     status: user.status,
     availableCredits: user.balance?.availableCredits ?? 0,
@@ -491,15 +584,13 @@ export async function handleAdminRequest(request: Request): Promise<Response> {
 
     if (url.pathname === '/api/platform/admin/users' && request.method === 'POST') {
       const body = await request.json().catch(() => ({})) as Record<string, unknown>
-      if (!useMysqlCompat()) throw new Error('Admin user creation currently requires MySQL mode')
-      const user = await createAdminMysqlUser(body)
+      const user = useMysqlCompat() ? await createAdminMysqlUser(body) : await createAdminPrismaUser(body)
       return jsonResponse({ user }, { status: 201 })
     }
 
     if (url.pathname === '/api/platform/admin/users' && request.method === 'PATCH') {
       const body = await request.json().catch(() => ({})) as Record<string, unknown>
-      if (!useMysqlCompat()) throw new Error('Admin user editing currently requires MySQL mode')
-      return jsonResponse(await updateAdminMysqlUser(body))
+      return jsonResponse(useMysqlCompat() ? await updateAdminMysqlUser(body) : await updateAdminPrismaUser(body))
     }
 
     if (url.pathname === '/api/platform/admin/orders/confirm-payment' && request.method === 'POST') {

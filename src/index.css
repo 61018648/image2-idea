@@ -35,8 +35,8 @@ body {
   font-family: var(--font-ui-sans);
   font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
   text-rendering: geometricPrecision;
-  -webkit-user-select: none;
-  user-select: none;
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 input,
@@ -48,6 +48,16 @@ select,
   -webkit-user-select: text;
   user-select: text;
   -webkit-touch-callout: default;
+}
+
+button,
+[role="button"],
+input[type="button"],
+input[type="submit"],
+input[type="reset"],
+.select-none {
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 * {

@@ -3,6 +3,7 @@ import { initStore } from './store'
 import { useStore } from './store'
 import { buildSettingsFromUrlParams, clearUrlSettingParams, hasUrlSettingParams } from './lib/urlSettings'
 import { mergeImportedSettings } from './lib/apiProfiles'
+import { getPlatformPublicConfig } from './lib/platformAccountApi'
 import { getCustomProviderConfigUrl, loadCustomProviderSettingsFromUrl } from './lib/customProviderConfigUrl'
 import { useDockerApiUrlMigrationNotice } from './hooks/useDockerApiUrlMigrationNotice'
 import Header from './components/Header'
@@ -33,6 +34,28 @@ export default function App() {
   const activeFavoriteCollectionId = useStore((s) => s.activeFavoriteCollectionId)
   useDockerApiUrlMigrationNotice()
   useGlobalClickSuppression()
+
+  useEffect(() => {
+    let cancelled = false
+    const applySiteTitle = async () => {
+      try {
+        const response = await getPlatformPublicConfig('')
+        if (cancelled) return
+        const siteName = response.config.siteName?.trim() || 'Image Idea'
+        document.title = siteName
+        document.querySelector('meta[name="apple-mobile-web-app-title"]')?.setAttribute('content', siteName)
+      } catch {
+        if (!cancelled) document.title = 'Image Idea'
+      }
+    }
+
+    void applySiteTitle()
+    window.addEventListener('platform-config-updated', applySiteTitle)
+    return () => {
+      cancelled = true
+      window.removeEventListener('platform-config-updated', applySiteTitle)
+    }
+  }, [])
 
   useEffect(() => {
     const searchParams = new URLSearchParams(window.location.search)

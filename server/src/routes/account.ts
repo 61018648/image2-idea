@@ -68,12 +68,12 @@ async function readProfile(userId: string, mode: 'development' | 'authenticated'
   }
   const account = await getPrismaClient().userAccount.findUnique({
     where: { id: userId },
-    select: { email: true, displayName: true, avatarUrl: true, role: true },
+    select: { username: true, email: true, phone: true, displayName: true, avatarUrl: true, role: true },
   })
   return {
-    username: account?.displayName ?? null,
+    username: account?.username ?? account?.displayName ?? null,
     email: account?.email ?? null,
-    phone: null,
+    phone: account?.phone ?? null,
     displayName: account?.displayName ?? null,
     avatarUrl: account?.avatarUrl ?? null,
     role: account?.role === 'admin' ? 'admin' as const : 'user' as const,
@@ -132,13 +132,14 @@ export async function handleAccountRequest(request: Request): Promise<Response> 
         where: { id: session.userId },
         data: {
           ...(email !== undefined ? { email } : {}),
+          ...(phone !== undefined ? { phone } : {}),
           ...(displayName !== undefined ? { displayName } : {}),
           ...(avatarUrl !== undefined ? { avatarUrl } : {}),
         },
       })
       return jsonResponse({
-        user: { id: updated.id, mode: session.mode, email: updated.email, role: updated.role === 'admin' ? 'admin' : 'user' },
-        account: { userId: updated.id, displayName: updated.displayName ?? undefined, avatarUrl: updated.avatarUrl ?? undefined },
+        user: { id: updated.id, mode: session.mode, username: updated.username, email: updated.email, role: updated.role === 'admin' ? 'admin' : 'user' },
+        account: { userId: updated.id, displayName: updated.displayName ?? undefined, avatarUrl: updated.avatarUrl ?? undefined, phone: updated.phone ?? undefined },
       })
     }
 
